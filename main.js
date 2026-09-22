@@ -1626,8 +1626,30 @@ function imsInstallPlayerQuantityLock() {
 }
 
 
-Hooks.once("ready", () => {
+
+async function imsMigrateLegacyGroupCapacity() {
+  if (!game.user?.isGM) return;
+
+  for (const actor of game.actors ?? []) {
+    if (actor.type !== "group") continue;
+
+    const current = actor.getFlag?.(MODULE_ID, "groupCapacity");
+    const legacy = actor.getFlag?.(LEGACY_MODULE_ID, "groupCapacity");
+
+    if (current === undefined && legacy !== undefined) {
+      await actor.setFlag(MODULE_ID, "groupCapacity", legacy);
+    }
+
+    if (legacy !== undefined) {
+      await actor.unsetFlag(LEGACY_MODULE_ID, "groupCapacity");
+    }
+  }
+}
+
+Hooks.once("ready", async () => {
   if (game.system.id !== "dnd5e") return;
+
+  await imsMigrateLegacyGroupCapacity();
 
   imsPatchDndItemSheetReadOnly();
   imsInstallNativeLeftClickView();
