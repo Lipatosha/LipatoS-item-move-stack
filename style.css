@@ -48,6 +48,23 @@
   text-align: center;
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 .ims-transfer-quantity .form-group {
   margin: 12px 0;
 }
@@ -56,6 +73,15 @@
   width: 100%;
 }
 
+
+
+
+
+
+
+
+
+/* v11 transfer dialog layout */
 .ims-transfer-quantity {
   min-width: 340px;
   padding: 2px 0 4px;
@@ -119,6 +145,8 @@
   opacity: 0.72;
 }
 
+
+/* v12 — transfer dialog geometry */
 .ims-transfer-quantity {
   box-sizing: border-box;
   width: 100%;
@@ -203,8 +231,8 @@
 .ims-transfer-quantity input.ims-current-value {
   box-sizing: border-box !important;
   width: 64px !important;
-  min-width: 64px;
-  max-width: 64px;
+  min-width: 64px !important;
+  max-width: 64px !important;
   height: 32px !important;
   margin: 0 !important;
   padding: 2px 6px !important;
@@ -217,6 +245,8 @@
   text-align: center !important;
 }
 
+
+/* v17 right-click transfer dialog */
 .ims-menu-transfer {
   min-width: 360px;
   padding: 4px 12px 8px;
@@ -261,6 +291,7 @@
   cursor: pointer;
 }
 
+
 .pcga-item-audit .pcga-item-line {
   display: flex;
   align-items: center;
@@ -274,10 +305,14 @@
   border-radius: 3px;
 }
 
+
+
 .ims-player-hidden-control {
   display: none !important;
 }
 
+
+/* v29: merge "Показать в чате" and "Избранное" into one visual section */
 #context-menu .ims-no-separator-before,
 .context-menu .ims-no-separator-before {
   border-top: 0 !important;
@@ -293,6 +328,8 @@
   content: none !important;
 }
 
+
+/* v33: player cannot type inventory quantity manually */
 input.ims-quantity-locked {
   cursor: default !important;
   user-select: none !important;
