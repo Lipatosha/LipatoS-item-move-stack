@@ -1,0 +1,36 @@
+{
+  "id": "lipatos-item-move-stack",
+  "title": "LipatoS - Перемещение и стопки предметов",
+  "description": "Перемещение и объединение стопок предметов D&D5e, передача предметов между персонажами и группами, разделение стопок, грузоподъёмность группы и ограничения инвентаря для игроков.",
+  "version": "34.0.0",
+  "compatibility": {
+    "minimum": "14",
+    "verified": "14"
+  },
+  "authors": [
+    {
+      "name": "LipatoS"
+    }
+  ],
+  "esmodules": [
+    "main.js"
+  ],
+  "relationships": {
+    "systems": [
+      {
+        "id": "dnd5e",
+        "type": "system",
+        "compatibility": {
+          "minimum": "6.0.0",
+          "verified": "6.0.3"
+        }
+      }
+    ]
+  },
+  "styles": [
+    "style.css"
+  ],
+  "socket": true,
+  "manifest": "https://raw.githubusercontent.com/Lipatosha/LipatoS-item-move-stack/main/module.json",
+  "download": "https://raw.githubusercontent.com/Lipatosha/LipatoS-item-move-stack/main/lipatos-item-move-stack-v34.0.0.zip"
+}
