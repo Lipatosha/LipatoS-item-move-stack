@@ -85,7 +85,7 @@ for (const isGM of [true, false]) {
   const menu = { querySelectorAll: () => [give, nativeUse, customUse, view, edit] };
   api.imsCleanContextMenu(menu);
   assert.equal(give.removed, true, "Give To Character must be removed for everyone");
-  assert.equal(nativeUse.removed, true, "duplicate native use must be removed");
+  assert.equal(nativeUse.removed, !isGM, "GM native use must be preserved; player duplicate removed");
   assert.equal(customUse.removed, false, "new use must remain for everyone");
   assert.equal(view.removed, false, "item view must remain");
   assert.equal(edit.removed, !isGM, "GM editing must remain available");
@@ -95,4 +95,24 @@ assert.ok(source.includes("(first?.parentElement ?? menu).prepend(entry)"),
   "Use command must be inserted at top");
 assert.ok(source.includes("event.button !== 0 || imsNativeContextClick"),
   "Player left-click interception must skip replay");
+
+// Verify GM left-click opens the same PLAY-mode view as a player.
+sandbox.game.user.isGM = true;
+sandbox.game.actors = [{
+  items: new Map([["test-item", item]]),
+  sheet: { element: { contains: () => true } }
+}];
+const gmRow = { dataset: { itemId: "test-item" } };
+const gmName = { closest: () => gmRow };
+const gmEvent = {
+  button: 0,
+  target: { closest: () => gmName },
+  preventDefault() { used.stopped++; },
+  stopPropagation() {},
+  stopImmediatePropagation() {}
+};
+for (const listener of events.get("click") ?? []) listener(gmEvent);
+assert.equal(used.sheet, 1, "GM LMB must open the item sheet");
+assert.ok(source.includes('if (!game.user.isGM && !menu.querySelector(".ims-context-use-entry"))'),
+  "GM must not receive a duplicate use command");
 console.log("LipatoS item-move-stack v34.0.2: smoke tests passed.");
