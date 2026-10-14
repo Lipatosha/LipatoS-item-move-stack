@@ -862,8 +862,9 @@ function imsInjectContextTransfer(menu) {
   const item = imsLastContextItem;
   if (!item) return;
 
-  // The GM already has a native "Use" context command: do not duplicate it.
-  if (!game.user.isGM && !menu.querySelector(".ims-context-use-entry")) {
+  // Always create our "Использовать" command: the GM does not receive
+  // a native entry in all D&D5e sheet/context-menu configurations.
+  if (!menu.querySelector(".ims-context-use-entry")) {
     const selectedItem = item;
     const selectedRow = imsLastContextRow;
     const entry = document.createElement("li");
@@ -1248,8 +1249,9 @@ function imsCleanContextMenu(menu) {
       continue;
     }
 
-    // A single consistent "Использовать" entry for both GM and players.
-    if (!game.user.isGM && imsLastContextItem && !row.classList.contains("ims-context-use-entry") &&
+    // Use our own entry consistently for GM and players; prevent duplicates
+    // if D&D5e or another module also contributes a generic "Использовать".
+    if (imsLastContextItem && !row.classList.contains("ims-context-use-entry") &&
         (text === "использовать" || text === "use")) {
       row.remove();
       continue;
