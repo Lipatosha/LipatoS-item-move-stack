@@ -378,3 +378,26 @@ input.ims-quantity-locked {
   font-size: 12px;
   line-height: 1.35;
 }
+
+/* v34.2.2 — charge price/currency selector inside compact Foundry dialog */
+.ims-dw-window .ims-dw-dialog [name="perChargePrice"] {
+  width: auto !important;
+  min-width: 0 !important;
+  flex: 1 1 100px;
+}
+.ims-dw-window .ims-dw-dialog select[name="currency"] {
+  flex: 0 0 145px;
+  max-width: 145px;
+  min-width: 0;
+}
+.ims-dw-window .ims-dw-dialog .form-fields {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+@media (max-width: 600px) {
+  .ims-dw-window .ims-dw-dialog select[name="currency"] {
+    flex-basis: 120px;
+    max-width: 120px;
+  }
+}
