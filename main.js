@@ -344,6 +344,29 @@ async function transferItem(sheet, event, data) {
  * ============================================================ */
 
 let imsLastContextItem = null;
+let imsLastContextRow = null;
+let imsNativeContextClick = false;
+
+// Run the exact inventory action D&D5e previously ran on left click.
+function imsRunOldLeftClick(item, row) {
+  let action = row?.querySelector?.(".item-name.item-action[data-action]") ?? null;
+  if ((!action || !action.isConnected) && item?.parent?.sheet?.element) {
+    const sheet = item.parent.sheet.element;
+    const matchingRow = Array.from(sheet.querySelectorAll(".item[data-item-id]"))
+      .find(candidate => candidate.dataset.itemId === item.id);
+    action = matchingRow?.querySelector(".item-name.item-action[data-action]") ?? null;
+  }
+  if (!action) {
+    ui.notifications.warn("Для этого предмета стандартное действие ЛКМ недоступно.");
+    return;
+  }
+  imsNativeContextClick = true;
+  try {
+    action.click();
+  } finally {
+    imsNativeContextClick = false;
+  }
+}
 
 function imsResolveContextItem(row) {
   if (!row) return null;
@@ -835,50 +858,76 @@ async function imsOpenTransferMenuDialog(item) {
 
 function imsInjectContextTransfer(menu) {
   if (!menu) return;
-
-  // Always remove player-only forbidden entries before adding transfer.
   imsCleanContextMenu(menu);
-
-  if (menu.querySelector(".ims-context-transfer-entry")) return;
   const item = imsLastContextItem;
+  if (!item) return;
 
-  if (!item || !item.isOwner || !imsTransferRecipients(item.parent).length) return;
+  if (!menu.querySelector(".ims-context-use-entry")) {
+    const selectedItem = item;
+    const selectedRow = imsLastContextRow;
+    const entry = document.createElement("li");
+    entry.className = "context-item ims-context-use-entry";
+    entry.innerHTML = `<i class="fa-solid fa-hand-pointer"></i> Использовать`;
+    entry.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      menu.remove();
+      imsRunOldLeftClick(selectedItem, selectedRow);
+    });
+    const first = menu.querySelector(".context-item, li");
+    (first?.parentElement ?? menu).prepend(entry);
+  }
 
-  const entry = document.createElement("li");
-  entry.className = "context-item ims-context-transfer-entry";
-  entry.innerHTML = `<i class="fa-solid fa-arrow-right-arrow-left"></i> Передать предмет`;
-
-  entry.addEventListener("click", async event => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const selected = imsLastContextItem;
-    menu.remove();
-
-    if (selected) await imsOpenTransferMenuDialog(selected);
-  });
-
-  // Put "Передать предмет" immediately after "Просмотр предмета" when possible.
-  const rows = Array.from(menu.querySelectorAll(".context-item, li"));
-  const view = rows.find(el =>
-    String(el.textContent ?? "").trim().toLowerCase().includes("просмотр предмета")
-  );
-
-  if (view) view.insertAdjacentElement("afterend", entry);
-  else menu.appendChild(entry);
+  if (!menu.querySelector(".ims-context-transfer-entry") &&
+      item.isOwner && imsTransferRecipients(item.parent).length) {
+    const selectedItem = item;
+    const entry = document.createElement("li");
+    entry.className = "context-item ims-context-transfer-entry";
+    entry.innerHTML = `<i class="fa-solid fa-arrow-right-arrow-left"></i> Передать предмет`;
+    entry.addEventListener("click", async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      menu.remove();
+      await imsOpenTransferMenuDialog(selectedItem);
+    });
+    const rows = Array.from(menu.querySelectorAll(".context-item, li"));
+    const view = rows.find(el =>
+      String(el.textContent ?? "").trim().toLowerCase().includes("просмотр предмета")
+    );
+    if (view) view.insertAdjacentElement("afterend", entry);
+    else (rows[0]?.parentElement ?? menu).appendChild(entry);
+  }
 
   imsReorderPlayerContextMenu(menu);
 }
 
 function imsInstallContextTransfer() {
+  // Block Give To Character even when a third-party adds it late, for ALL roles.
+  document.addEventListener("click", event => {
+    const row = event.target?.closest?.(
+      "#context-menu .context-item, #context-menu li, .context-menu .context-item, .context-menu li"
+    );
+    if (!row) return;
+    const label = String(row.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+    if (!label.includes("give to character")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+    row.remove();
+  }, true);
+
   // Capture the exact item that was right-clicked.
   document.addEventListener("contextmenu", event => {
     const row = event.target?.closest?.("[data-item-id], [data-document-id], [data-uuid]");
     if (!row) {
       imsLastContextItem = null;
+      imsLastContextRow = null;
       return;
     }
 
+    imsLastContextRow = row;
     imsLastContextItem = imsResolveContextItem(row);
 
     // Foundry normally creates the context menu after the contextmenu event.
@@ -894,12 +943,14 @@ function imsInstallContextTransfer() {
       for (const node of mutation.addedNodes) {
         if (!(node instanceof HTMLElement)) continue;
 
+        const parentMenu = node.closest?.("#context-menu, .context-menu");
+        if (parentMenu) imsInjectContextTransfer(parentMenu);
         if (node.matches?.("#context-menu, .context-menu")) {
           imsInjectContextTransfer(node);
         }
-
-        const nested = node.querySelector?.("#context-menu, .context-menu");
-        if (nested) imsInjectContextTransfer(nested);
+        for (const nested of node.querySelectorAll?.("#context-menu, .context-menu") ?? []) {
+          imsInjectContextTransfer(nested);
+        }
       }
     }
   });
@@ -1150,8 +1201,8 @@ function patchGroupFeatures(GroupSheet) {
 
 /* ============================================================
  * Player inventory restrictions
- * The old custom "Использовать" action and its consumption/chat
- * handler were removed completely.
+ * The context-menu "Использовать" now replays D&D5e's original
+ * inventory click handler; it does not implement custom consumption.
  * ============================================================ */
 
 function imsRestrictInventoryUI(root) {
@@ -1186,28 +1237,36 @@ function imsRestrictInventoryUI(root) {
 }
 
 function imsCleanContextMenu(menu) {
-  if (game.user.isGM || !menu) return;
-
+  if (!menu) return;
   const rows = Array.from(menu.querySelectorAll(".context-item, li"));
-
   for (const row of rows) {
-    const text = String(row.textContent ?? "").trim().toLowerCase();
+    const text = String(row.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 
-    // Remove player-only forbidden entries.
+    if (text.includes("give to character")) {
+      row.remove();
+      continue;
+    }
+
+    // A single consistent "Использовать" entry for both GM and players.
+    if (imsLastContextItem && !row.classList.contains("ims-context-use-entry") &&
+        (text === "использовать" || text === "use")) {
+      row.remove();
+      continue;
+    }
+    if (game.user.isGM || row.classList.contains("ims-context-use-entry")) continue;
+
     if (
       text.includes("изменить") ||
       text.includes("редакт") ||
       text.includes("создать копию") ||
       text === "edit" ||
       text.includes("duplicate") ||
-      text.includes("использовать") ||
-      text === "use"
+      text.includes("использовать")
     ) {
       row.remove();
     }
   }
 }
-
 
 function imsReorderPlayerContextMenu(menu) {
   if (game.user.isGM || !menu) return;
@@ -1233,13 +1292,13 @@ function imsReorderPlayerContextMenu(menu) {
       .includes(needle)
   );
 
+  const use = rows.find(row => row.classList.contains("ims-context-use-entry"));
   const view = byText("просмотр предмета");
   const transfer = byText("передать предмет");
 
   // Wait until our custom transfer entry exists.
   if (!transfer) return;
 
-  const give = byText("give to character");
   const split = byText("разделить стопку");
   const chat = byText("показать в чате");
   const favorite = byText("избранное");
@@ -1250,10 +1309,10 @@ function imsReorderPlayerContextMenu(menu) {
   menu.dataset.imsOrdered = "1";
 
   const wanted = [
+    use,
     view,
     transfer,
     split,
-    give,
     chat,
     favorite,
     expand,
@@ -1326,7 +1385,8 @@ function imsInstallPlayerRestrictions() {
     if (!contextRow) return;
 
     const text = String(contextRow.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
-    if (text.includes("использовать") || text === "use") {
+    if (!contextRow.classList.contains("ims-context-use-entry") &&
+        (text.includes("использовать") || text === "use")) {
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
@@ -1470,7 +1530,7 @@ function imsInstallNativeLeftClickView() {
   // .item-name.item-action[data-action="<clickAction>"]
   // Capture before D&D5e handles its clickAction (which currently posts to chat).
   document.addEventListener("click", event => {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || imsNativeContextClick) return;
 
     const name = event.target?.closest?.(
       ".inventory-element .item[data-item-id] .item-name.item-action"
