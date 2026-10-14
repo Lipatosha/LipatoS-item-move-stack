@@ -1,8 +1,8 @@
 {
   "id": "lipatos-item-move-stack",
   "title": "LipatoS - Перемещение и стопки предметов",
-  "description": "Перемещение и стопки предметов D&D5e: просмотр предметов по ЛКМ у игроков и ГМа, использование по ПКМ и удаление Give To Character.",
-  "version": "34.0.3",
+  "description": "Перемещение и стопки D&D5e: просмотр по ЛКМ у всех; первый пункт ПКМ «Использовать» для игроков и ГМа без дубликатов; Give To Character скрыт.",
+  "version": "34.0.4",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
@@ -22,7 +22,7 @@
         "type": "system",
         "compatibility": {
           "minimum": "6.0.0",
-          "verified": "6.0.5"
+          "verified": "6.0.6"
         }
       }
     ]
