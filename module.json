@@ -1,8 +1,8 @@
 {
   "id": "lipatos-item-move-stack",
   "title": "LipatoS - Перемещение и стопки предметов",
-  "description": "Перемещение и стопки D&D5e: просмотр по ЛКМ у всех; первый пункт ПКМ «Использовать» для игроков и ГМа без дубликатов; Give To Character скрыт.",
-  "version": "34.0.4",
+  "description": "Перемещение и стопки предметов D&D5e, ПКМ Использовать, просмотр по ЛКМ и настраиваемый ГМ динамический вес по оставшимся зарядам.",
+  "version": "34.1.0",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
@@ -13,7 +13,8 @@
     }
   ],
   "esmodules": [
-    "main.js"
+    "main.js",
+    "dynamic-weight.js"
   ],
   "relationships": {
     "systems": [
