@@ -1,0 +1,37 @@
+name: Release LipatoS Item Move Stack v34.0.3
+
+on:
+  push:
+    paths:
+      - ".github/workflows/release-v34.0.3.yml"
+      - "tests/smoke.cjs"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Verify JavaScript syntax and player/GM behaviour
+        run: |
+          node --check main.js
+          node tests/smoke.cjs
+          node -e 'const m=require("./module.json");if(m.version!=="34.0.3")process.exit(1);'
+      - name: Package installable module
+        run: |
+          zip -q lipatos-item-move-stack.zip module.json main.js style.css README.md CHANGELOG.md
+          unzip -t lipatos-item-move-stack.zip
+          unzip -p lipatos-item-move-stack.zip module.json | python3 -m json.tool > /dev/null
+      - name: Publish v34.0.3 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v34.0.3 lipatos-item-move-stack.zip module.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "LipatoS — Перемещение и стопки предметов v34.0.3" \
+            --notes "Добавлен первый пункт ПКМ «Использовать» с прежним штатным действием ЛКМ D&D5e для игроков и ГМа. Give To Character удалён у всех. Просмотр ЛКМ, перенос и объединение стопок сохранены."
