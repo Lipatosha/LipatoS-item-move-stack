@@ -22,6 +22,7 @@ const sandbox = {
 vm.runInNewContext(source + `
   globalThis.testApi = {
     imsRunOldLeftClick,
+    imsCanUseInventoryItem,
     imsInstallNativeLeftClickView,
     imsCleanContextMenu,
     imsInjectContextTransfer,
@@ -34,6 +35,7 @@ const used = { native: 0, sheet: 0, stopped: 0 };
 
 const item = {
   id: "test-item",
+  type: "consumable",
   isOwner: true,
   parent: {},
   sheet: { render() { used.sheet++; } }
@@ -113,8 +115,8 @@ const gmEvent = {
 };
 for (const listener of events.get("click") ?? []) listener(gmEvent);
 assert.equal(used.sheet, 1, "GM LMB must open the item sheet");
-assert.ok(source.includes('if (!menu.querySelector(".ims-context-use-entry"))'),
-  "The use entry must be installed for GM and players");
+assert.ok(source.includes('} else if (!menu.querySelector(".ims-context-use-entry"))'),
+  "The Use entry is created only for eligible item types");
 
 // Simulate the GM context menu and ensure the actual "Использовать" action
 // is inserted FIRST even when D&D5e does not supply one by itself.
@@ -159,4 +161,30 @@ assert.equal(menuRows.length, 2, "GM must have one Use entry, not duplicates");
 api.imsInjectContextTransfer(gmMenu);
 assert.equal(menuRows.length, 2, "re-render must not add another GM Use entry");
 item.isOwner = originalOwner;
-console.log("LipatoS item-move-stack v34.0.4: smoke tests passed.");
+
+// The explicit Use menu forwards eligible items to instant-consumables rather
+// than triggering native D&D5e (which may not support loot/tool activities).
+let consumed=0;
+sandbox.game.modules=new Map([["lipatos-instant-consumables",{
+  api:{canUse: () => true, useItem: () => {consumed++;return true;}}
+}]]);
+api.imsRunOldLeftClick(item,row);
+assert.equal(consumed,1,"Use forwarded to instant consumption API");
+assert.equal(used.native,1,"native click not duplicated when instant handling succeeds");
+
+// Equipment and containers never expose/use instant consumption.
+for (const excludedType of ["equipment","container","backpack"]) {
+  item.type=excludedType;
+  api.imsRunOldLeftClick(item,row);
+  assert.equal(consumed,1,excludedType+" is excluded from consumption");
+  api.setContextItem(item);
+  const before=menuRows.length;
+  api.imsInjectContextTransfer(gmMenu);
+  assert.equal(menuRows.length,before,"no new entry created for "+excludedType);
+}
+item.type="consumable";
+for (const eligibleType of ["loot","tool","weapon","consumable"]) {
+  item.type=eligibleType;
+  assert.equal(api.imsCanUseInventoryItem(item),true,eligibleType+" accepts use");
+}
+console.log("LipatoS item-move-stack v34.2.3: integrated Use action, menu exclusions and GM/player cases passed.");
