@@ -1,0 +1,38 @@
+name: Release LipatoS Item Move Stack v34.2.3
+
+on:
+  push:
+    paths:
+      - ".github/workflows/release-v34.2.3.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Verify JavaScript syntax and player/GM behaviour
+        run: |
+          node --check main.js
+          node --check dynamic-weight.js
+          node tests/smoke.cjs
+          node tests/dynamic-weight.cjs
+          node -e 'const m=require("./module.json");if(m.version!=="34.2.3")process.exit(1);'
+      - name: Package installable module
+        run: |
+          zip -q lipatos-item-move-stack.zip module.json main.js dynamic-weight.js style.css README.md CHANGELOG.md
+          unzip -t lipatos-item-move-stack.zip
+          unzip -p lipatos-item-move-stack.zip module.json | python3 -m json.tool > /dev/null
+      - name: Publish v34.2.3 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v34.2.3 lipatos-item-move-stack.zip module.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "LipatoS — Перемещение и стопки предметов v34.2.3" \
+            --notes "ПКМ Использовать теперь подключается к Instant Consumables и списывает подходящий предмет сразу, кроме снаряжения и контейнеров. Сохранены прочие функции."
