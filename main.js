@@ -347,17 +347,8 @@ let imsLastContextItem = null;
 let imsLastContextRow = null;
 let imsNativeContextClick = false;
 
-// Use is available for physical inventory items except equipment and containers.
-function imsCanUseInventoryItem(item) {
-  return !!item && ["consumable", "loot", "tool", "weapon"].includes(item.type);
-}
-
-// Prefer instantaneous use of charges/quantity when its companion module is active.
-// Otherwise fall back to D&D5e's original inventory click action.
+// Run the exact inventory action D&D5e previously ran on left click.
 function imsRunOldLeftClick(item, row) {
-  if (!imsCanUseInventoryItem(item)) return;
-  const instant = game.modules?.get?.("lipatos-instant-consumables")?.api;
-  if (instant?.canUse?.(item) && instant?.useItem?.(item)) return;
   let action = row?.querySelector?.(".item-name.item-action[data-action]") ?? null;
   if ((!action || !action.isConnected) && item?.parent?.sheet?.element) {
     const sheet = item.parent.sheet.element;
@@ -871,11 +862,9 @@ function imsInjectContextTransfer(menu) {
   const item = imsLastContextItem;
   if (!item) return;
 
-  // Do not show "Использовать" for equipment or containers.
-  // These types must not be consumed by this module.
-  if (!imsCanUseInventoryItem(item)) {
-    menu.querySelector(".ims-context-use-entry")?.remove();
-  } else if (!menu.querySelector(".ims-context-use-entry")) {
+  // Always create our "Использовать" command: the GM does not receive
+  // a native entry in all D&D5e sheet/context-menu configurations.
+  if (!menu.querySelector(".ims-context-use-entry")) {
     const selectedItem = item;
     const selectedRow = imsLastContextRow;
     const entry = document.createElement("li");
