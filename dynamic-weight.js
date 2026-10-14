@@ -63,32 +63,82 @@
     const remaining = Math.max(0, Math.min(max, max - spent));
     return Math.round((empty + perCharge * remaining) * 10000) / 10000;
   }
+  const COINS = new Set(["cp", "sp", "gp"]);
+
+  // Optional dynamic value: price for one portion in the selected coin.
+  // Empty containers have zero charge value; disable the option to keep
+  // a manually configured price. Existing items are opt-in, never modified.
+  function calculatePrice(item, changes={}) {
+    if (!eligible(item) || item.system?.price?.value === undefined) return null;
+    const cfg = settings(item, changes);
+    if (!cfg?.enabled || !cfg.priceEnabled) return null;
+    const each = numeric(cfg.perChargePrice);
+    const currency = cfg.currency;
+    const max = numeric(updated(changes, "system.uses.max", item.system.uses.max));
+    const spent = numeric(updated(changes, "system.uses.spent", item.system.uses.spent));
+    if (!Number.isFinite(each) || each < 0 || !COINS.has(currency) ||
+        !Number.isFinite(max) || max <= 0 || !Number.isFinite(spent)) return null;
+    const remaining = Math.max(0, Math.min(max, max - spent));
+    return {
+      value: Math.round(each * remaining * 10000) / 10000,
+      denomination: currency
+    };
+  }
+
   function relevant(changes) {
     return changed(changes, "system.uses.spent") ||
       changed(changes, "system.uses.max") ||
       changed(changes, "system.weight.value") ||
+      changed(changes, "system.price.value") ||
+      changed(changes, "system.price.denomination") ||
       changed(changes, "flags." + ID + "." + FLAG);
   }
 
   Hooks.on("preUpdateItem", (item, changes) => {
     if (!relevant(changes)) return;
     const weight = calculate(item, changes);
-    if (weight === null) return;
-    const proposed = numeric(updated(changes, "system.weight.value", item.system.weight.value));
-    if (Math.abs(proposed - weight) < 0.00005) return;
-    changes["system.weight.value"] = weight;
+    if (weight !== null) {
+      const proposed = numeric(updated(changes, "system.weight.value", item.system.weight.value));
+      if (!Number.isFinite(proposed) || Math.abs(proposed - weight) >= 0.00005) {
+        changes["system.weight.value"] = weight;
+      }
+    }
+    const price = calculatePrice(item, changes);
+    if (price !== null) {
+      const proposed = numeric(updated(changes, "system.price.value", item.system.price.value));
+      const denomination = updated(changes, "system.price.denomination", item.system.price.denomination);
+      if (!Number.isFinite(proposed) || Math.abs(proposed - price.value) >= 0.00005) {
+        changes["system.price.value"] = price.value;
+      }
+      if (denomination !== price.denomination) {
+        changes["system.price.denomination"] = price.denomination;
+      }
+    }
   });
 
   const processing = new Set();
   async function reconcile(item) {
     if (!item?.isOwner || !item?.parent || processing.has(item.uuid)) return;
+    const changes = {};
     const weight = calculate(item);
-    if (weight === null || Math.abs(numeric(item.system.weight.value) - weight) < 0.00005) return;
+    if (weight !== null && Math.abs(numeric(item.system.weight.value) - weight) >= 0.00005) {
+      changes["system.weight.value"] = weight;
+    }
+    const price = calculatePrice(item);
+    if (price !== null) {
+      if (Math.abs(numeric(item.system.price.value) - price.value) >= 0.00005) {
+        changes["system.price.value"] = price.value;
+      }
+      if (item.system.price.denomination !== price.denomination) {
+        changes["system.price.denomination"] = price.denomination;
+      }
+    }
+    if (!Object.keys(changes).length) return;
     processing.add(item.uuid);
     try {
-      await item.update({ "system.weight.value": weight });
+      await item.update(changes);
     } catch (error) {
-      console.error(ID + " | Cannot recalculate weight", error);
+      console.error(ID + " | Cannot recalculate charge weight or price", error);
     } finally {
       processing.delete(item.uuid);
     }
@@ -132,6 +182,10 @@
     // explicitly chooses how much each portion contributes.
     const perCharge = Number.isFinite(previousRate) ? previousRate : 0;
     const checked = current.enabled ? "checked" : "";
+    const priceEnabled = current.priceEnabled ? "checked" : "";
+    const priceEach = Number.isFinite(numeric(current.perChargePrice)) ? current.perChargePrice : 0;
+    const currency = COINS.has(current.currency) ? current.currency :
+      (COINS.has(item.system?.price?.denomination) ? item.system.price.denomination : "cp");
     const units = fu.escapeHTML(String(item.system.weight.units ?? "lb"));
 
     const DialogV2 = foundry.applications?.api?.DialogV2;
@@ -140,17 +194,29 @@
       return;
     }
     const formHtml =
-      '<form class="standard-form ims-dw-dialog">' +
+      // DialogV2 already creates a parent <form>. Nesting another form breaks
+      // form association, so use a plain <div> for the dialog content.
+      '<div class="standard-form ims-dw-dialog">' +
       '<div class="form-group"><label>Динамический вес</label><div class="form-fields">' +
       '<input type="checkbox" name="enabled" ' + checked + '></div></div>' +
       '<div class="form-group"><label>Вес пустого предмета (' + units + ')</label><div class="form-fields">' +
       '<input type="text" inputmode="decimal" autocomplete="off" name="empty" value="' + printNum(empty) + '"></div></div>' +
       '<div class="form-group"><label>Вес одного заряда (' + units + ')</label><div class="form-fields">' +
       '<input type="text" inputmode="decimal" autocomplete="off" name="perCharge" value="' + printNum(perCharge) + '"></div></div>' +
+      '<div class="form-group"><label>Пересчитывать цену от зарядов</label><div class="form-fields">' +
+      '<input type="checkbox" name="priceEnabled" ' + priceEnabled + '></div></div>' +
+      '<div class="form-group"><label>Цена одного заряда</label><div class="form-fields">' +
+      '<input type="text" inputmode="decimal" autocomplete="off" name="perChargePrice" value="' +
+      printNum(priceEach) + '">' +
+      '<select name="currency" aria-label="Валюта одного заряда">' +
+      '<option value="cp"' + (currency === "cp" ? " selected" : "") + '>Медь (мм)</option>' +
+      '<option value="sp"' + (currency === "sp" ? " selected" : "") + '>Серебро (см)</option>' +
+      '<option value="gp"' + (currency === "gp" ? " selected" : "") + '>Золото (зм)</option>' +
+      '</select></div></div>' +
       '<p class="hint">Текущие заряды: ' + printNum(item.system.uses.value) +
       ' / ' + printNum(max) + '. Вес = вес пустого предмета + вес одного заряда × оставшиеся заряды. ' +
-      'При изменении максимума зарядов вес одной порции не меняется. ' +
-      'При отключении сохраняется текущий вес.</p></form>';
+      'При включённом пересчёте цены стоимость = цена одного заряда × оставшиеся заряды, ' +
+      'без стоимости пустой тары. При выключенном пересчёте цена не изменяется автоматически.</p></div>';
 
     const result = await DialogV2.wait({
       window: { title: "Динамический вес — " + item.name },
@@ -161,13 +227,20 @@
       buttons: [
         {
           action: "save", label: "Сохранить", default: true,
-          callback: (event, button, dialog) => {
-            const form = dialog.element.querySelector(".ims-dw-dialog");
-            if (!form) return null;
+          callback: (event, button) => {
+            // Foundry VTT 14: button.form is the dialog's FORM element.
+            // The third callback argument is not guaranteed to be an
+            // ApplicationV2 instance and must not be used as dialog.element.
+            const elements = button?.form?.elements;
+            if (!elements) return { invalid: true };
+            const field = name => elements.namedItem?.(name) ?? elements[name];
             return {
-              enabled: Boolean(form.querySelector('[name="enabled"]')?.checked),
-              empty: numeric(form.querySelector('[name="empty"]')?.value),
-              perCharge: numeric(form.querySelector('[name="perCharge"]')?.value)
+              enabled: Boolean(field("enabled")?.checked),
+              empty: numeric(field("empty")?.value),
+              perCharge: numeric(field("perCharge")?.value),
+              priceEnabled: Boolean(field("priceEnabled")?.checked),
+              perChargePrice: numeric(field("perChargePrice")?.value),
+              currency: field("currency")?.value
             };
           }
         },
@@ -181,6 +254,16 @@
       ui.notifications.warn("Вес пустого предмета и вес одного заряда должны быть неотрицательными числами.");
       return;
     }
+    if (result.priceEnabled && (!Number.isFinite(result.perChargePrice) ||
+        result.perChargePrice < 0 || !COINS.has(result.currency))) {
+      ui.notifications.warn("Укажи корректную неотрицательную цену одного заряда и выбери валюту.");
+      return;
+    }
+    // An unused price field must never block saving just the weight.
+    if (!result.priceEnabled) {
+      result.perChargePrice = 0;
+      result.currency = COINS.has(result.currency) ? result.currency : "cp";
+    }
     const change = {};
     change["flags." + ID + "." + FLAG] = result;
     if (result.enabled) {
@@ -190,6 +273,11 @@
         return;
       }
       change["system.weight.value"] = weight;
+      const price = calculatePrice(item, change);
+      if (price !== null) {
+        change["system.price.value"] = price.value;
+        change["system.price.denomination"] = price.denomination;
+      }
     }
     await item.update(change);
     ui.notifications.info(result.enabled ? "Динамический вес включён." : "Динамический вес выключен.");
