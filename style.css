@@ -352,6 +352,29 @@ input.ims-quantity-locked {
   border-radius: 5px;
   cursor: pointer;
 }
-.ims-dw-dialog .form-group { margin: 12px 0; }
-.ims-dw-dialog .form-fields input[type="number"] { width: 100%; }
-.ims-dw-dialog .hint { opacity: 0.8; font-size: 12px; }
+/* v34.2.1 — compact, localized number-entry dialog */
+.ims-dw-window {
+  max-width: calc(100vw - 32px) !important;
+}
+.ims-dw-window .ims-dw-dialog {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.ims-dw-dialog .form-group {
+  margin: 12px 0;
+  min-width: 0;
+}
+.ims-dw-dialog .form-fields {
+  min-width: 0;
+}
+.ims-dw-dialog .form-fields input[type="text"] {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.ims-dw-dialog .hint {
+  opacity: 0.8;
+  font-size: 12px;
+  line-height: 1.35;
+}
