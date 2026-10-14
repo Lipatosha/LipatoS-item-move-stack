@@ -24,7 +24,7 @@ const sandbox = {
   console
 };
 const source = fs.readFileSync("dynamic-weight.js", "utf8");
-const injected = source.replace(/\}\)\(\);\s*$/, 'globalThis.__dwTest = {calculate, renderButton, configure, eligible, relevant};})();');
+const injected = source.replace(/\}\)\(\);\s*$/, 'globalThis.__dwTest = {calculate, renderButton, configure, eligible, relevant, numeric};})();');
 assert.notEqual(source, injected, "test API injection succeeded");
 vm.runInNewContext(injected, sandbox, {filename: "dynamic-weight.js"});
 const api = sandbox.__dwTest;
@@ -106,4 +106,60 @@ assert.ok(source.includes('name="perCharge"'), "settings dialog must have per-ch
 assert.ok(source.includes("Вес одного заряда"), "per-charge field should be localized");
 assert.ok(!source.includes('name="full"'), "legacy full-weight input should be removed");
 assert.ok(source.includes("void migrate(item)"), "created legacy items are migrated");
-console.log("Dynamic weight v34.2.0: charge mass, legacy migration, refills, max changes and hooks passed.");
+
+assert.equal(api.numeric("0,5"),0.5,"Russian decimal comma");
+assert.equal(api.numeric("0.5"),0.5,"decimal point");
+assert.equal(api.numeric("5"),5,"integer");
+assert.equal(api.numeric("0"),0,"zero");
+assert.equal(api.numeric(" 0,75 "),0.75,"whitespace and comma");
+assert.equal(api.numeric("0,5,2").toString(),"NaN","ambiguous decimals rejected");
+assert.equal(api.numeric("abc").toString(),"NaN","nonnumeric text rejected");
+assert.ok(source.includes('type="text" inputmode="decimal" autocomplete="off" name="empty"'),
+  "empty-weight field must be editable with both comma and dot");
+assert.ok(source.includes('type="text" inputmode="decimal" autocomplete="off" name="perCharge"'),
+  "per-charge field must be editable with both comma and dot");
+assert.ok(source.includes('position: { width: 700 }'), "dialog width must be compact");
+
+async function checkDialogInput(rawEmpty, rawPerCharge, expected, label) {
+  const entry = item();
+  const messagesBefore = messages.length;
+  let called = 0;
+  sandbox.foundry.applications.api.DialogV2 = {
+    async wait(opts) {
+      called += 1;
+      assert.equal(opts.position.width,700,"dialog uses compact width");
+      assert.deepEqual(Array.from(opts.classes), ["ims-dw-window"]);
+      assert.ok(opts.content.includes('name="perCharge"'));
+      const values = {empty:rawEmpty, perCharge:rawPerCharge};
+      const form = {
+        querySelector(selector) {
+          const name = /name="([^"]+)"/.exec(selector)?.[1];
+          if(name === "enabled") return {checked:true};
+          return {value:values[name]};
+        }
+      };
+      const dialog = {element:{querySelector: selector=> selector===".ims-dw-dialog" ? form : null}};
+      return opts.buttons[0].callback(null,null,dialog);
+    }
+  };
+  await api.configure(entry);
+  assert.equal(called,1,label+" dialog invoked");
+  if(expected===null) {
+    assert.equal(entry.lastUpdate,undefined,label+" validation must reject input");
+    assert.ok(messages.length>messagesBefore,label+" should warn");
+  } else {
+    assert.ok(entry.lastUpdate,label+" saved");
+    assert.equal(entry.lastUpdate["system.weight.value"],expected,label+" computed mass");
+  }
+}
+(async () => {
+  await checkDialogInput("5","0,5",32.5,"comma charge input");
+  await checkDialogInput("5","0.5",32.5,"dot charge input");
+  await checkDialogInput("1","1",56,"integer charge input");
+  await checkDialogInput("0","0",0,"zero charge input");
+  await checkDialogInput("5,5","0,5",33,"comma empty and charge");
+  await checkDialogInput("5","oops",null,"invalid text input");
+  await checkDialogInput("-1","0,5",null,"negative empty weight");
+  console.log("Dynamic weight v34.2.1: comma/dot/integers, validation, compact modal and mass all passed.");
+})().catch(error => {console.error(error); process.exitCode=1;});
+
