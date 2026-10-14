@@ -30,17 +30,33 @@
   function settings(item, changes={}) {
     return updated(changes, "flags." + ID + "." + FLAG, item.getFlag?.(ID, FLAG)) ?? null;
   }
+  // Upgrade v34.1.0's full/empty configuration without losing the old rate.
+  // Use the OLD max for conversion, so changing max later does not change
+  // how much each charge weighs.
+  function rate(item, cfg) {
+    const explicit = numeric(cfg?.perCharge);
+    if (Number.isFinite(explicit)) return explicit;
+    const oldFull = numeric(cfg?.full);
+    const oldEmpty = numeric(cfg?.empty);
+    const oldMax = numeric(item?.system?.uses?.max);
+    if (Number.isFinite(oldFull) && Number.isFinite(oldEmpty) &&
+        oldFull >= oldEmpty && Number.isFinite(oldMax) && oldMax > 0) {
+      return (oldFull - oldEmpty) / oldMax;
+    }
+    return NaN;
+  }
   function calculate(item, changes={}) {
     if (!eligible(item)) return null;
     const cfg = settings(item, changes);
     if (!cfg?.enabled) return null;
-    const full = numeric(cfg.full), empty = numeric(cfg.empty);
+    const empty = numeric(cfg.empty);
+    const perCharge = rate(item, cfg);
     const max = numeric(updated(changes, "system.uses.max", item.system.uses.max));
     const spent = numeric(updated(changes, "system.uses.spent", item.system.uses.spent));
-    if (![full, empty, max, spent].every(Number.isFinite) ||
-        empty < 0 || full < empty || max <= 0) return null;
+    if (![perCharge, empty, max, spent].every(Number.isFinite) ||
+        empty < 0 || perCharge < 0 || max <= 0) return null;
     const remaining = Math.max(0, Math.min(max, max - spent));
-    return Math.round((empty + (full - empty) * remaining / max) * 10000) / 10000;
+    return Math.round((empty + perCharge * remaining) * 10000) / 10000;
   }
   function relevant(changes) {
     return changed(changes, "system.uses.spent") ||
@@ -76,7 +92,9 @@
     if (userId === game.user.id && relevant(changes)) void reconcile(item);
   });
   Hooks.on("createItem", (item, options, userId) => {
-    if (userId === game.user.id && settings(item)?.enabled) void reconcile(item);
+    if (userId !== game.user.id) return;
+    if (settings(item)?.enabled) void reconcile(item);
+    if (game.user?.isGM) void migrate(item);
   });
 
   function getRoot(app, html) {
@@ -103,8 +121,11 @@
       return;
     }
     const current = settings(item) ?? {};
-    const full = Number.isFinite(numeric(current.full)) ? current.full : item.system.weight.value;
     const empty = Number.isFinite(numeric(current.empty)) ? current.empty : 0;
+    const previousRate = rate(item, current);
+    // For an unconfigured item, default to zero charge weight. The GM
+    // explicitly chooses how much each portion contributes.
+    const perCharge = Number.isFinite(previousRate) ? previousRate : 0;
     const checked = current.enabled ? "checked" : "";
     const units = fu.escapeHTML(String(item.system.weight.units ?? "lb"));
 
@@ -117,12 +138,13 @@
       '<form class="standard-form ims-dw-dialog">' +
       '<div class="form-group"><label>Динамический вес</label><div class="form-fields">' +
       '<input type="checkbox" name="enabled" ' + checked + '></div></div>' +
-      '<div class="form-group"><label>Вес полной ёмкости (' + units + ')</label><div class="form-fields">' +
-      '<input type="number" name="full" min="0" step="any" value="' + printNum(full) + '"></div></div>' +
-      '<div class="form-group"><label>Вес пустой ёмкости (' + units + ')</label><div class="form-fields">' +
+      '<div class="form-group"><label>Вес пустого предмета (' + units + ')</label><div class="form-fields">' +
       '<input type="number" name="empty" min="0" step="any" value="' + printNum(empty) + '"></div></div>' +
+      '<div class="form-group"><label>Вес одного заряда (' + units + ')</label><div class="form-fields">' +
+      '<input type="number" name="perCharge" min="0" step="any" value="' + printNum(perCharge) + '"></div></div>' +
       '<p class="hint">Текущие заряды: ' + printNum(item.system.uses.value) +
-      ' / ' + printNum(max) + '. Вес единицы предмета меняется с остатком зарядов. ' +
+      ' / ' + printNum(max) + '. Вес = вес пустого предмета + вес одного заряда × оставшиеся заряды. ' +
+      'При изменении максимума зарядов вес одной порции не меняется. ' +
       'При отключении сохраняется текущий вес.</p></form>';
 
     const result = await DialogV2.wait({
@@ -137,8 +159,8 @@
             if (!form) return null;
             return {
               enabled: Boolean(form.querySelector('[name="enabled"]')?.checked),
-              full: numeric(form.querySelector('[name="full"]')?.value),
-              empty: numeric(form.querySelector('[name="empty"]')?.value)
+              empty: numeric(form.querySelector('[name="empty"]')?.value),
+              perCharge: numeric(form.querySelector('[name="perCharge"]')?.value)
             };
           }
         },
@@ -147,9 +169,9 @@
       close: () => null
     });
     if (!result) return;
-    if (![result.full, result.empty].every(Number.isFinite) ||
-        result.empty < 0 || result.full < result.empty) {
-      ui.notifications.warn("Вес полной ёмкости должен быть не меньше веса пустой. Оба значения должны быть положительными или нулём.");
+    if (![result.empty, result.perCharge].every(Number.isFinite) ||
+        result.empty < 0 || result.perCharge < 0) {
+      ui.notifications.warn("Вес пустого предмета и вес одного заряда должны быть неотрицательными числами.");
       return;
     }
     const change = {};
@@ -195,10 +217,53 @@
     target.prepend(div);
   }
 
+  // One-time migration for items configured in v34.1.0.
+  // Keep reading old data in rate() as a fallback, e.g. on unlinked tokens
+  // or compendium items that are not owned by a world actor.
+  const migrating = new Set();
+  async function migrate(item) {
+    if (!game.user?.isGM || !item?.isOwner || !eligible(item)) return;
+    const cfg = settings(item);
+    if (!cfg || Object.prototype.hasOwnProperty.call(cfg, "perCharge") ||
+        !Number.isFinite(numeric(cfg.full)) || !Number.isFinite(numeric(cfg.empty))) return;
+    const perCharge = rate(item, cfg);
+    if (!Number.isFinite(perCharge) || perCharge < 0 || migrating.has(item.uuid)) return;
+    migrating.add(item.uuid);
+    try {
+      // Preserve the original full/empty values in the flag for older setups,
+      // while perCharge becomes authoritative in the new formula.
+      await item.update({
+        ["flags." + ID + "." + FLAG]: {
+          ...cfg, perCharge: Math.round(perCharge * 100000000) / 100000000
+        }
+      });
+    } catch (error) {
+      console.error(ID + " | Could not migrate dynamic weight for " + item.name, error);
+    } finally {
+      migrating.delete(item.uuid);
+    }
+  }
+
   Hooks.on("renderItemSheet", renderButton);
   Hooks.on("renderItemSheetV2", renderButton);
   Hooks.on("renderApplicationV2", renderButton);
   Hooks.once("ready", () => {
-    if (game.system.id === "dnd5e") console.log(ID + " | Charge-based weight active.");
+    if (game.system.id !== "dnd5e") return;
+    console.log(ID + " | Charge-based weight active (empty + perCharge * remaining).");
+    if (!game.user?.isGM) return;
+
+    // Do not block world loading. Update only previously configured items.
+    void (async () => {
+      const seen = new Set();
+      const candidates = [
+        ...Array.from(game.items ?? []),
+        ...Array.from(game.actors ?? []).flatMap(actor => Array.from(actor.items ?? []))
+      ];
+      for (const item of candidates) {
+        if (!item?.uuid || seen.has(item.uuid)) continue;
+        seen.add(item.uuid);
+        await migrate(item);
+      }
+    })();
   });
 })();
