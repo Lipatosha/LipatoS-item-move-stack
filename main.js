@@ -862,7 +862,8 @@ function imsInjectContextTransfer(menu) {
   const item = imsLastContextItem;
   if (!item) return;
 
-  if (!menu.querySelector(".ims-context-use-entry")) {
+  // The GM already has a native "Use" context command: do not duplicate it.
+  if (!game.user.isGM && !menu.querySelector(".ims-context-use-entry")) {
     const selectedItem = item;
     const selectedRow = imsLastContextRow;
     const entry = document.createElement("li");
@@ -1248,7 +1249,7 @@ function imsCleanContextMenu(menu) {
     }
 
     // A single consistent "Использовать" entry for both GM and players.
-    if (imsLastContextItem && !row.classList.contains("ims-context-use-entry") &&
+    if (!game.user.isGM && imsLastContextItem && !row.classList.contains("ims-context-use-entry") &&
         (text === "использовать" || text === "use")) {
       row.remove();
       continue;
@@ -1524,11 +1525,11 @@ function imsResolveInventoryItem(row) {
 }
 
 function imsInstallNativeLeftClickView() {
-  if (game.user.isGM) return;
+  // Both GM and players open the item in PLAY mode on LMB.
 
   // D&D5e 6 inventory template:
   // .item-name.item-action[data-action="<clickAction>"]
-  // Capture before D&D5e handles its clickAction (which currently posts to chat).
+  // Capture before D&D5e handles the original clickAction, for both roles.
   document.addEventListener("click", event => {
     if (event.button !== 0 || imsNativeContextClick) return;
 
