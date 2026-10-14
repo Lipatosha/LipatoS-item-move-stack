@@ -8,9 +8,14 @@
   const FLAG = "dynamicWeight";
   const fu = foundry.utils;
 
+  // Foundry UI can use a Russian decimal comma. Normalize text explicitly
+  // because <input type="number"> often returns an empty value for "0,5".
   function numeric(value) {
     if (value === "" || value === undefined || value === null) return NaN;
-    const n = Number(value);
+    if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+    const normalized = String(value).trim().replace(/[\u00a0\u202f\s]/g, "").replace(",", ".");
+    if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(normalized)) return NaN;
+    const n = Number(normalized);
     return Number.isFinite(n) ? n : NaN;
   }
   function updated(changes, path, fallback) {
@@ -139,9 +144,9 @@
       '<div class="form-group"><label>Динамический вес</label><div class="form-fields">' +
       '<input type="checkbox" name="enabled" ' + checked + '></div></div>' +
       '<div class="form-group"><label>Вес пустого предмета (' + units + ')</label><div class="form-fields">' +
-      '<input type="number" name="empty" min="0" step="any" value="' + printNum(empty) + '"></div></div>' +
+      '<input type="text" inputmode="decimal" autocomplete="off" name="empty" value="' + printNum(empty) + '"></div></div>' +
       '<div class="form-group"><label>Вес одного заряда (' + units + ')</label><div class="form-fields">' +
-      '<input type="number" name="perCharge" min="0" step="any" value="' + printNum(perCharge) + '"></div></div>' +
+      '<input type="text" inputmode="decimal" autocomplete="off" name="perCharge" value="' + printNum(perCharge) + '"></div></div>' +
       '<p class="hint">Текущие заряды: ' + printNum(item.system.uses.value) +
       ' / ' + printNum(max) + '. Вес = вес пустого предмета + вес одного заряда × оставшиеся заряды. ' +
       'При изменении максимума зарядов вес одной порции не меняется. ' +
@@ -149,6 +154,8 @@
 
     const result = await DialogV2.wait({
       window: { title: "Динамический вес — " + item.name },
+      classes: ["ims-dw-window"],
+      position: { width: 700 },
       modal: true,
       content: formHtml,
       buttons: [
