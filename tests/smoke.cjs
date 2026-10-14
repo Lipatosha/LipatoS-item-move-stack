@@ -85,7 +85,7 @@ for (const isGM of [true, false]) {
   const menu = { querySelectorAll: () => [give, nativeUse, customUse, view, edit] };
   api.imsCleanContextMenu(menu);
   assert.equal(give.removed, true, "Give To Character must be removed for everyone");
-  assert.equal(nativeUse.removed, !isGM, "GM native use must be preserved; player duplicate removed");
+  assert.equal(nativeUse.removed, true, "duplicate native use removed for all roles");
   assert.equal(customUse.removed, false, "new use must remain for everyone");
   assert.equal(view.removed, false, "item view must remain");
   assert.equal(edit.removed, !isGM, "GM editing must remain available");
@@ -113,6 +113,50 @@ const gmEvent = {
 };
 for (const listener of events.get("click") ?? []) listener(gmEvent);
 assert.equal(used.sheet, 1, "GM LMB must open the item sheet");
-assert.ok(source.includes('if (!game.user.isGM && !menu.querySelector(".ims-context-use-entry"))'),
-  "GM must not receive a duplicate use command");
-console.log("LipatoS item-move-stack v34.0.2: smoke tests passed.");
+assert.ok(source.includes('if (!menu.querySelector(".ims-context-use-entry"))'),
+  "The use entry must be installed for GM and players");
+
+// Simulate the GM context menu and ensure the actual "Использовать" action
+// is inserted FIRST even when D&D5e does not supply one by itself.
+const originalOwner = item.isOwner;
+item.isOwner = false; // Avoid requiring transfer dialog in this menu test.
+const menuRows = [];
+const menuList = {
+  prepend(entry) { menuRows.unshift(entry); },
+  appendChild(entry) { menuRows.push(entry); }
+};
+const viewRow = {
+  textContent: "Просмотр предмета",
+  parentElement: menuList,
+  classList: { contains: () => false },
+  remove() { menuRows.splice(menuRows.indexOf(this), 1); }
+};
+menuRows.push(viewRow);
+sandbox.document.createElement = tagName => ({
+  tagName: tagName.toUpperCase(),
+  className: "",
+  textContent: "Использовать",
+  classList: { contains(key) { return key === "ims-context-use-entry"; } },
+  addEventListener(name, fn) { this[name] = fn; },
+  remove() {}
+});
+const gmMenu = {
+  querySelectorAll: () => [...menuRows],
+  querySelector(selector) {
+    if (selector.includes("ims-context-use-entry")) {
+      return menuRows.find(row => row.className?.includes("ims-context-use-entry"));
+    }
+    return menuRows[0] ?? null;
+  },
+  remove() {}
+};
+sandbox.game.user.isGM = true;
+api.setContextItem(item);
+api.imsInjectContextTransfer(gmMenu);
+assert.equal(menuRows[0]?.className, "context-item ims-context-use-entry",
+  "GM Use must be the first entry");
+assert.equal(menuRows.length, 2, "GM must have one Use entry, not duplicates");
+api.imsInjectContextTransfer(gmMenu);
+assert.equal(menuRows.length, 2, "re-render must not add another GM Use entry");
+item.isOwner = originalOwner;
+console.log("LipatoS item-move-stack v34.0.4: smoke tests passed.");
