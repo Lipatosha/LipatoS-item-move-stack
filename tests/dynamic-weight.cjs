@@ -24,7 +24,7 @@ const sandbox = {
   console
 };
 const source = fs.readFileSync("dynamic-weight.js", "utf8");
-const injected = source.replace(/\}\)\(\);\s*$/, 'globalThis.__dwTest = {calculate, renderButton, configure, eligible, relevant, numeric};})();');
+const injected = source.replace(/\}\)\(\);\s*$/, 'globalThis.__dwTest = {calculate, calculatePrice, renderButton, configure, eligible, relevant, numeric};})();');
 assert.notEqual(source, injected, "test API injection succeeded");
 vm.runInNewContext(injected, sandbox, {filename: "dynamic-weight.js"});
 const api = sandbox.__dwTest;
@@ -36,6 +36,7 @@ function item(overrides={}) {
     parent: {name:"Character"}, isOwner: true,
     system: {
       weight:{value:29.75, units:"lb"},
+      price:{value:10, denomination:"gp"},
       uses:{max:100,spent:45,value:55}
     },
     getFlag: () => settings,
@@ -119,27 +120,35 @@ assert.ok(source.includes('type="text" inputmode="decimal" autocomplete="off" na
 assert.ok(source.includes('type="text" inputmode="decimal" autocomplete="off" name="perCharge"'),
   "per-charge field must be editable with both comma and dot");
 assert.ok(source.includes('position: { width: 700 }'), "dialog width must be compact");
+assert.ok(source.includes("button?.form?.elements"), "DialogV2 form is read through the real clicked button");
+assert.ok(!source.includes('dialog.element.querySelector(".ims-dw-dialog")'), "old invalid dialog access removed");
+assert.ok(source.includes('<div class="standard-form ims-dw-dialog">'),"DialogV2 content must not nest a form");
 
-async function checkDialogInput(rawEmpty, rawPerCharge, expected, label) {
+async function checkDialogInput(rawEmpty, rawPerCharge, expected, label, opts={}) {
   const entry = item();
   const messagesBefore = messages.length;
   let called = 0;
   sandbox.foundry.applications.api.DialogV2 = {
-    async wait(opts) {
+    async wait(options) {
       called += 1;
-      assert.equal(opts.position.width,700,"dialog uses compact width");
-      assert.deepEqual(Array.from(opts.classes), ["ims-dw-window"]);
-      assert.ok(opts.content.includes('name="perCharge"'));
-      const values = {empty:rawEmpty, perCharge:rawPerCharge};
-      const form = {
-        querySelector(selector) {
-          const name = /name="([^"]+)"/.exec(selector)?.[1];
-          if(name === "enabled") return {checked:true};
-          return {value:values[name]};
-        }
+      assert.equal(options.position.width,700,"dialog uses compact width");
+      assert.deepEqual(Array.from(options.classes), ["ims-dw-window"]);
+      assert.ok(options.content.includes('name="perCharge"'));
+      assert.ok(options.content.includes('name="perChargePrice"'));
+      assert.ok(options.content.includes('<div class="standard-form ims-dw-dialog">'));
+      assert.ok(!options.content.includes('<form'),"DialogV2 itself owns the form");
+      const values={
+        enabled:{checked:true},
+        empty:{value:rawEmpty},
+        perCharge:{value:rawPerCharge},
+        priceEnabled:{checked:Boolean(opts.priceEnabled)},
+        perChargePrice:{value:opts.priceEach ?? "0"},
+        currency:{value:opts.currency ?? "cp"}
       };
-      const dialog = {element:{querySelector: selector=> selector===".ims-dw-dialog" ? form : null}};
-      return opts.buttons[0].callback(null,null,dialog);
+      // DialogV2's actual callback receives the clicked button, with form.
+      const button={form:{elements:{namedItem:name=>values[name]??null}}};
+      // Third argument intentionally omitted; the old code read it incorrectly.
+      return options.buttons[0].callback(null,button);
     }
   };
   await api.configure(entry);
@@ -150,8 +159,33 @@ async function checkDialogInput(rawEmpty, rawPerCharge, expected, label) {
   } else {
     assert.ok(entry.lastUpdate,label+" saved");
     assert.equal(entry.lastUpdate["system.weight.value"],expected,label+" computed mass");
+    if(opts.priceEnabled) {
+      assert.equal(entry.lastUpdate["system.price.value"],opts.expectedPrice,label+" computed charge price");
+      assert.equal(entry.lastUpdate["system.price.denomination"],opts.currency,label+" currency");
+    } else {
+      assert.equal(entry.lastUpdate["system.price.value"],undefined,label+" price remains unchanged");
+    }
   }
 }
+
+const priceSettings={enabled:true,empty:5,perCharge:0.5,priceEnabled:true,perChargePrice:2,currency:"sp"};
+const withPrices=item({config:priceSettings});
+assert.equal(api.calculatePrice(withPrices).value,110,"55 charges at 2 sp each");
+assert.equal(api.calculatePrice(withPrices).denomination,"sp","price currency is silver");
+const priceChange={"system.uses.spent":46};
+onPreUpdate(withPrices,priceChange);
+assert.equal(priceChange["system.price.value"],108,"using charge decreases total price");
+assert.equal(priceChange["system.price.denomination"],"sp","price currency updates");
+const zeroValue={"system.uses.spent":100};
+onPreUpdate(withPrices,zeroValue);
+assert.equal(zeroValue["system.price.value"],0,"empty container charge value is zero");
+const existingPrice=item({config:{enabled:true,empty:5,perCharge:0.5}});
+assert.equal(api.calculatePrice(existingPrice),null,"old dynamic-weight items do not change price");
+const priceOnlyDisabled=item({config:{enabled:true,empty:5,perCharge:0.5,priceEnabled:false}});
+const priceIrrelevant={"system.uses.spent":45};
+onPreUpdate(priceOnlyDisabled,priceIrrelevant);
+assert.equal(priceIrrelevant["system.price.value"],undefined,"opt-out keeps existing price");
+
 (async () => {
   await checkDialogInput("5","0,5",32.5,"comma charge input");
   await checkDialogInput("5","0.5",32.5,"dot charge input");
@@ -160,6 +194,21 @@ async function checkDialogInput(rawEmpty, rawPerCharge, expected, label) {
   await checkDialogInput("5,5","0,5",33,"comma empty and charge");
   await checkDialogInput("5","oops",null,"invalid text input");
   await checkDialogInput("-1","0,5",null,"negative empty weight");
-  console.log("Dynamic weight v34.2.1: comma/dot/integers, validation, compact modal and mass all passed.");
+  await checkDialogInput("5","0.5",32.5,"copper price", {
+    priceEnabled:true,priceEach:"5",currency:"cp",expectedPrice:275
+  });
+  await checkDialogInput("5","1",60,"silver price comma", {
+    priceEnabled:true,priceEach:"0,5",currency:"sp",expectedPrice:27.5
+  });
+  await checkDialogInput("5","1",60,"gold price", {
+    priceEnabled:true,priceEach:"1.5",currency:"gp",expectedPrice:82.5
+  });
+  await checkDialogInput("5","1",null,"invalid per-charge price", {
+    priceEnabled:true,priceEach:"bad",currency:"gp"
+  });
+  await checkDialogInput("5","1",null,"invalid price currency", {
+    priceEnabled:true,priceEach:"5",currency:"bad"
+  });
+  console.log("Dynamic weight v34.2.2: Foundry button.form, integer/decimal inputs, currency pricing and charge updates passed.");
 })().catch(error => {console.error(error); process.exitCode=1;});
 
