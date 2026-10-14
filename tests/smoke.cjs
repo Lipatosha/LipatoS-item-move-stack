@@ -91,8 +91,8 @@ for (const isGM of [true, false]) {
   assert.equal(edit.removed, !isGM, "GM editing must remain available");
 }
 
-assert.match(source, /\\(first\\?\\.parentElement \\?\\? menu\\)\\.prepend\\(entry\\)/,
+assert.ok(source.includes("(first?.parentElement ?? menu).prepend(entry)"),
   "Use command must be inserted at top");
-assert.match(source, /event\\.button !== 0 \\|\\| imsNativeContextClick/,
+assert.ok(source.includes("event.button !== 0 || imsNativeContextClick"),
   "Player left-click interception must skip replay");
 console.log("LipatoS item-move-stack v34.0.2: smoke tests passed.");
