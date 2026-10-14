@@ -334,3 +334,24 @@ input.ims-quantity-locked {
   cursor: default !important;
   user-select: none !important;
 }
+
+/* v34.1.0 — GM-only charge-based item weight configuration */
+.dnd5e2.sheet.item .ims-dw-toolbar,
+.dnd5e.sheet.item .ims-dw-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 4px 8px 8px;
+  flex: 0 0 auto;
+}
+.ims-dw-toolbar .ims-dw-button {
+  width: auto;
+  min-width: 180px;
+  padding: 5px 12px;
+  font-size: 12px;
+  line-height: 1.3;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.ims-dw-dialog .form-group { margin: 12px 0; }
+.ims-dw-dialog .form-fields input[type="number"] { width: 100%; }
+.ims-dw-dialog .hint { opacity: 0.8; font-size: 12px; }
