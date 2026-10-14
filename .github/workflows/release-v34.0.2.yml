@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - ".github/workflows/release-v34.0.2.yml"
+      - "tests/smoke.cjs"
   workflow_dispatch:
 
 permissions:
