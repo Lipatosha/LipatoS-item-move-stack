@@ -401,3 +401,14 @@ input.ims-quantity-locked {
     max-width: 120px;
   }
 }
+
+/* v34.2.9: ensure the group inventory bar is visible inside the D&D5e v6 custom inventory element. */
+.dnd5e2.sheet.actor.group .inventory-element > .ims-group-capacity,
+.dnd5e.sheet.actor.group .inventory-element > .ims-group-capacity {
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  flex: 0 0 auto !important;
+  min-height: 28px !important;
+  margin: 8px 0 10px !important;
+}
