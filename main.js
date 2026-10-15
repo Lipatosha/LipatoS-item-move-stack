@@ -471,41 +471,50 @@ function imsCoinCode(item) {
   return ["cp", "sp", "gp"].includes(code) ? code : null;
 }
 
-async function imsGMHandleTransfer(payload) {
-  if (!game.user.isGM) return;
+async function imsGMHandleTransfer(payload, {local = false} = {}) {
+  // A transfer made by the GM, or between actors owned by one player,
+  // executes immediately in the originating client. Cross-owner transfers
+  // are processed automatically by an online GM; no approval dialog.
+  if (!local && !game.user.isGM) return;
   const primary = imsPrimaryActiveGM();
-  if (!primary || primary.id !== game.user.id) return;
+  if (!local && (!primary || primary.id !== game.user.id)) return;
 
-  const reply = (ok, extra = {}) => game.socket.emit(`module.${MODULE_ID}`, {
-    type: "ims-transfer-result", requestId: payload?.requestId, requesterId: payload?.requesterId, ok, ...extra
-  });
+  const reply = (ok, extra = {}) => {
+    const result = {
+      type: "ims-transfer-result", requestId: payload?.requestId,
+      requesterId: payload?.requesterId, ok, ...extra
+    };
+    if (!local) game.socket.emit(`module.${MODULE_ID}`, result);
+    return result;
+  };
 
   const requester = game.users.get(payload?.requesterId);
   const sourceActor = payload?.sourceActorUuid
     ? await fromUuid(payload.sourceActorUuid).catch(() => null) : null;
   if (!requester?.active || !sourceActor?.items ||
-      !sourceActor.testUserPermission?.(requester, "OWNER")) {
-    reply(false, {error: "Отправитель недоступен или нет прав на передачу."});
+      !sourceActor.testUserPermission?.(requester, "OWNER") ||
+      (local && !game.user.isGM && requester.id !== game.user.id)) {
+    return reply(false, {error: "Отправитель недоступен или нет прав на передачу."});
     return;
   }
 
   const sourceItem = sourceActor.items.get(payload?.sourceItemId);
   if (!sourceItem) {
-    reply(false, {error: "Предмет больше недоступен."});
+    return reply(false, {error: "Предмет больше недоступен."});
     return;
   }
 
   const allowed = imsTransferRecipients(sourceActor);
   const recipientId = payload?.target === "__GM__" ? "__GM__" : payload?.targetActorId;
   if (!allowed.some(r => r.id === recipientId)) {
-    reply(false, {error: "Получатель не в сети или не состоит в вашей группе."});
+    return reply(false, {error: "Получатель не в сети или не состоит в вашей группе."});
     return;
   }
 
   const sourceQty = Math.floor(getQuantity(sourceItem));
   const qty = Number(payload?.qty);
   if (!Number.isSafeInteger(qty) || qty < 1 || qty > sourceQty) {
-    reply(false, {error: "Количество предметов изменилось. Откройте передачу заново."});
+    return reply(false, {error: "Количество предметов изменилось. Откройте передачу заново."});
     return;
   }
 
@@ -519,22 +528,28 @@ async function imsGMHandleTransfer(payload) {
     coinCode, qty
   };
 
+  if (local && !game.user.isGM && recipientId === "__GM__") {
+    return reply(false, {error: "Передать ГМу можно только когда ГМ в сети."});
+  }
+
   if (recipientId === "__GM__") {
     try {
-      if (qty === sourceQty) await sourceItem.delete();
-      else await sourceItem.update({"system.quantity": sourceQty - qty});
-      reply(true, {...common, targetName: "ГМ", targetType: "gm"});
+      if (qty === sourceQty) await sourceItem.delete({lipatosItemTransfer: true});
+      else await sourceItem.update({"system.quantity": sourceQty - qty}, {lipatosItemTransfer: true});
+      return reply(true, {...common, targetName: "ГМ", targetType: "gm"});
     } catch (err) {
       console.error(`${MODULE_ID} | Transfer to GM failed`, err);
-      reply(false, {error: "Не удалось передать предмет ГМу."});
+      return reply(false, {error: "Не удалось передать предмет ГМу."});
     }
     return;
   }
 
   const targetActor = game.actors.get(recipientId);
   if (!targetActor) {
-    reply(false, {error: "Получатель больше недоступен."});
-    return;
+    return reply(false, {error: "Получатель больше недоступен."});
+  }
+  if (local && !game.user.isGM && !targetActor.isOwner) {
+    return reply(false, {error: "Получатель недоступен для прямой передачи."});
   }
 
   const targetItem = !coinCode && isStackable(sourceItem)
@@ -549,10 +564,10 @@ async function imsGMHandleTransfer(payload) {
     if (coinCode) {
       // Physical coins go directly to the wallet, not into inventory.
       if (!Number.isFinite(oldCurrency)) throw new Error("Recipient has no wallet");
-      await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency + qty});
+      await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency + qty}, {lipatosItemTransfer: true});
       credited = true;
     } else if (targetItem) {
-      await targetItem.update({"system.quantity": oldTargetQty + qty});
+      await targetItem.update({"system.quantity": oldTargetQty + qty}, {lipatosItemTransfer: true});
       credited = true;
     } else {
       const itemData = sourceItem.toObject();
@@ -563,31 +578,31 @@ async function imsGMHandleTransfer(payload) {
       if (foundry.utils.hasProperty(itemData, "system.container")) {
         foundry.utils.setProperty(itemData, "system.container", null);
       }
-      created = await targetActor.createEmbeddedDocuments("Item", [itemData], {keepId: false});
+      created = await targetActor.createEmbeddedDocuments("Item", [itemData], {keepId: false, lipatosItemTransfer: true});
       if (!Array.isArray(created) || !created.length) throw new Error("Item creation was blocked");
       credited = true;
     }
 
-    if (qty === sourceQty) await sourceItem.delete();
-    else await sourceItem.update({"system.quantity": sourceQty - qty});
+    if (qty === sourceQty) await sourceItem.delete({lipatosItemTransfer: true});
+    else await sourceItem.update({"system.quantity": sourceQty - qty}, {lipatosItemTransfer: true});
 
-    reply(true, {...common, targetName: targetActor.name, targetType: targetActor.type});
+    return reply(true, {...common, targetName: targetActor.name, targetType: targetActor.type});
   } catch (err) {
     console.error(`${MODULE_ID} | Context transfer failed`, err);
     try {
       if (credited) {
         if (coinCode) {
-          await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency});
+          await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency}, {lipatosItemTransfer: true});
         } else if (targetItem) {
-          await targetItem.update({"system.quantity": oldTargetQty});
+          await targetItem.update({"system.quantity": oldTargetQty}, {lipatosItemTransfer: true});
         } else if (created.length) {
-          await targetActor.deleteEmbeddedDocuments("Item", created.map(item => item.id));
+          await targetActor.deleteEmbeddedDocuments("Item", created.map(item => item.id), {lipatosItemTransfer: true});
         }
       }
     } catch (rollbackError) {
       console.error(`${MODULE_ID} | Transfer rollback failed`, rollbackError);
     }
-    reply(false, {error: "Передача не выполнена. Проверьте журнал ГМа."});
+    return reply(false, {error: "Передача не выполнена. Проверьте журнал ГМа."});
   }
 }
 
@@ -597,34 +612,59 @@ function imsNotifyAuditModule(result) {
   Hooks.callAll("lipatosItemTransferCompleted", result);
 }
 
-function imsRequestGMTransfer(sourceItem, recipient, qty) {
+async function imsRequestGMTransfer(sourceItem, recipient, qty) {
+  const requesterId = game.user.id;
+  const requestId = foundry.utils.randomID();
+  const payload = {
+    type: "ims-transfer-request",
+    requestId,
+    requesterId,
+    sourceActorUuid: sourceItem.parent.uuid,
+    sourceItemId: sourceItem.id,
+    target: recipient.id === "__GM__" ? "__GM__" : "actor",
+    targetActorId: recipient.id === "__GM__" ? null : recipient.id,
+    qty
+  };
+
+  // GM is already authoritative: do the transfer here, not via a socket
+  // that may not be echoed back to its sender (the old 8-second timeout).
+  if (game.user.isGM) {
+    return imsGMHandleTransfer(payload, {local: true});
+  }
+
+  // When the player owns both actor sheets, direct movement does not need
+  // a GM or a socket. This also works without a GM online.
+  const destination = recipient.id === "__GM__" ? null : game.actors.get(recipient.id);
+  if (sourceItem.isOwner && destination?.isOwner) {
+    return imsGMHandleTransfer(payload, {local: true});
+  }
+
+  // Foundry does not allow a player to write to another player's Actor.
+  // An active GM applies that update automatically, without any approval.
+  if (!imsPrimaryActiveGM()) {
+    return {ok: false, error: "Для передачи другому игроку нужен подключённый мастер."};
+  }
+
+  const socket = `module.${MODULE_ID}`;
   return new Promise(resolve => {
-    const requestId = foundry.utils.randomID();
-    const socket = `module.${MODULE_ID}`;
-
-    const handler = payload => {
-      if (payload?.type !== "ims-transfer-result" || payload?.requestId !== requestId || payload?.requesterId !== game.user.id) return;
-      game.socket.off(socket, handler);
-      resolve(payload);
+    let completed = false;
+    const settle = result => {
+      if (completed) return;
+      completed = true;
+      game.socket.off(socket, onResponse);
+      clearTimeout(timeout);
+      resolve(result);
     };
-
-    game.socket.on(socket, handler);
-
-    game.socket.emit(socket, {
-      type: "ims-transfer-request",
-      requestId,
-      requesterId: game.user.id,
-      sourceActorUuid: sourceItem.parent.uuid,
-      sourceItemId: sourceItem.id,
-      target: recipient.id === "__GM__" ? "__GM__" : "actor",
-      targetActorId: recipient.id === "__GM__" ? null : recipient.id,
-      qty
-    });
-
-    setTimeout(() => {
-      game.socket.off(socket, handler);
-      resolve({ok: false, error: "ГМ не ответил на запрос передачи."});
-    }, 8000);
+    const onResponse = result => {
+      if (result?.type !== "ims-transfer-result" ||
+          result?.requestId !== requestId || result?.requesterId !== requesterId) return;
+      settle(result);
+    };
+    game.socket.on(socket, onResponse);
+    const timeout = setTimeout(() => {
+      settle({ok: false, error: "Не удалось выполнить передачу. Проверьте подключение игроков и повторите попытку."});
+    }, 15000);
+    game.socket.emit(socket, payload);
   });
 }
 
