@@ -123,7 +123,7 @@
     }
 
     // Fallback for Foundry v14 group sheets missing from ui.windows.
-    const roots = document.querySelectorAll(".dnd5e2.sheet.actor.group, .dnd5e.sheet.actor.group, .application.dnd5e2.group, .window-app.dnd5e2.group");
+    const roots = document.querySelectorAll(".dnd5e2.sheet.actor.group, .dnd5e.sheet.actor.group, .application.dnd5e2.group, .window-app.dnd5e2.group, .dnd5e2.sheet.group, .application.sheet.actor.group");
     for (const root of roots) {
       if (!inventoryOf(root)) continue;
       let app = [...apps].find(entry => rootOf(entry) === root && isGroup(entry));
@@ -131,7 +131,11 @@
         const id = root.dataset?.documentId ?? root.dataset?.actorId;
         let actor = id ? game.actors?.get?.(id) : null;
         if (actor?.type !== "group") {
-          const name = root.querySelector(".window-title")?.textContent?.trim();
+          // The D&D5e 6.0.6 Group sheet hides its window title:
+          // its visible title is instead .sheet-header .document-name.
+          const titleField = root.querySelector(".sheet-header .document-name");
+          const name = String(titleField?.value ?? titleField?.textContent
+            ?? root.querySelector(".window-title")?.textContent ?? "").trim();
           const matches = [...(game.actors ?? [])].filter(a => a.type === "group" && a.name === name);
           actor = matches.length === 1 ? matches[0] : null;
         }
