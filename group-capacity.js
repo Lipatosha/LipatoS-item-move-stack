@@ -9,10 +9,10 @@
 
   const actorOf = app => app?.actor ?? app?.document ?? app?.object;
   const rootOf = app => app?.element?.[0] ?? app?.element;
-  const isGroup = app => actorOf(app)?.type === "group" && actorOf(app)?.documentName === "Actor";
+  const isGroup = app => actorOf(app)?.type === "group";
 
   function inventoryOf(root) {
-    return root?.querySelector?.("dnd5e-inventory.inventory-element, .inventory-element")
+    return root?.querySelector?.("dnd5e-inventory.inventory-element, .inventory-element, dnd5e-inventory")
       ?? root?.querySelector?.('[data-tab="inventory"] .body');
   }
 
@@ -120,6 +120,25 @@
       const root = rootOf(app);
       if (!root?.isConnected) { tracked.delete(app); continue; }
       if (isGroup(app)) track(app);
+    }
+
+    // Fallback for Foundry v14 group sheets missing from ui.windows.
+    const roots = document.querySelectorAll(".dnd5e2.sheet.actor.group, .dnd5e.sheet.actor.group, .application.dnd5e2.group, .window-app.dnd5e2.group");
+    for (const root of roots) {
+      if (!inventoryOf(root)) continue;
+      let app = [...apps].find(entry => rootOf(entry) === root && isGroup(entry));
+      if (!app) {
+        const id = root.dataset?.documentId ?? root.dataset?.actorId;
+        let actor = id ? game.actors?.get?.(id) : null;
+        if (actor?.type !== "group") {
+          const name = root.querySelector(".window-title")?.textContent?.trim();
+          const matches = [...(game.actors ?? [])].filter(a => a.type === "group" && a.name === name);
+          actor = matches.length === 1 ? matches[0] : null;
+        }
+        if (!actor) continue;
+        app = {actor, element: root};
+      }
+      track(app);
     }
   }
 
