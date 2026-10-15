@@ -48,8 +48,19 @@
     const limit = limitOf(actor);
     const gm = game.user?.isGM === true;
     const signature = [actor.uuid ?? actor.id, current, limit, gm].join(":");
-    let bar = host.querySelector(":scope > .ims-group-capacity");
+    // D&D5e 6.0.6 search/filter row sits inside dnd5e-inventory,
+    // immediately before .items-list. The bar belongs directly below it.
+    const inventory = host.querySelector("dnd5e-inventory, .inventory-element");
+    const search = inventory?.querySelector(":scope > .middle")
+      ?? inventory?.querySelector(".middle");
+    const currency = inventory?.querySelector(":scope > .currency");
+    const anchor = search ?? currency ?? inventory;
+    let bar = host.querySelector(".ims-group-capacity");
     if (bar?.dataset?.capacitySignature === signature) {
+      // Relocate existing bar without recreating the input during re-renders.
+      if (anchor?.nextElementSibling !== bar && anchor?.insertAdjacentElement) {
+        anchor.insertAdjacentElement("afterend", bar);
+      }
       bar.hidden = false;
       return true;
     }
@@ -62,7 +73,7 @@
     for (const [prop, value] of [
       ["display", "block"], ["visibility", "visible"], ["opacity", "1"],
       ["position", "relative"], ["width", "100%"], ["min-height", "28px"],
-      ["z-index", "5"], ["flex", "0 0 auto"], ["order", "-1"]
+      ["z-index", "5"], ["flex", "0 0 auto"], ["order", "0"]
     ]) bar.style.setProperty(prop, value, "important");
     const percent = Math.max(0, Math.min(100, 100 * current / limit));
     bar.innerHTML = [
@@ -70,14 +81,15 @@
       '<div class="ims-capacity-fill" style="width:' + percent + '%"></div>',
       '<div class="ims-capacity-label">',
       '<i class="fa-solid fa-weight-hanging" aria-hidden="true"></i>',
-      '<span>Вес группы:</span><span>' + current + '</span><span>/</span>',
+      '<span>' + current + '</span><span>/</span>',
       gm
         ? '<input class="ims-capacity-max" type="number" min="1" step="1" value="' +
           limit + '" title="Максимальный вес группы — изменяет только ГМ" aria-label="Максимальный вес группы">'
         : '<span>' + limit + '</span>',
       '</div></div>'
     ].join("");
-    host.prepend(bar);
+    if (anchor?.insertAdjacentElement) anchor.insertAdjacentElement("afterend", bar);
+    else host.prepend(bar);
 
     bar.querySelector(".ims-capacity-max")?.addEventListener("change", async event => {
       if (!game.user?.isGM) return;
@@ -167,7 +179,7 @@
     if (game.system?.id !== "dnd5e") return;
     new MutationObserver(scheduleScan).observe(document.body, {childList: true, subtree: true});
     scheduleScan();
-    console.info(MODULE, "Настройка веса группы включена (v34.2.13)");
+    console.info(MODULE, "Настройка веса группы включена (v34.2.14)");
   });
 
   globalThis.LipatoSGroupCapacity = {

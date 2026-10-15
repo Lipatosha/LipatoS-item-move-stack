@@ -1,6 +1,7 @@
 .ims-group-capacity {
-  margin: 8px 0 10px;
+  margin: 6px 0 8px;
   width: 100%;
+  box-sizing: border-box;
 }
 
 .ims-capacity-track {

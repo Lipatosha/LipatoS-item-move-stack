@@ -1,0 +1,43 @@
+name: Release LipatoS Item Move Stack v34.2.14
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v34.2.14.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check module and all regression tests
+        run: |
+          node --check main.js
+          node --check group-capacity.js
+          node --check dynamic-weight.js
+          node -e 'const m=require("./module.json");if(m.version!=="34.2.14" || !m.esmodules.includes("group-capacity.js"))process.exit(1)'
+          node tests/smoke.cjs
+          node tests/dynamic-weight.cjs
+          node tests/coin-drag.cjs
+          node tests/online-transfer.cjs
+          node tests/direct-transfer.cjs
+          node tests/group-capacity.cjs
+          node tests/legacy-group-capacity.cjs
+      - name: Package complete Foundry module
+        run: |
+          zip -q lipatos-item-move-stack.zip module.json main.js group-capacity.js dynamic-weight.js style.css README.md CHANGELOG.md
+          unzip -t lipatos-item-move-stack.zip
+      - name: Publish v34.2.14
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v34.2.14 >/dev/null 2>&1; then
+            gh release upload v34.2.14 lipatos-item-move-stack.zip module.json --clobber
+          else
+            gh release create v34.2.14 lipatos-item-move-stack.zip module.json \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest \
+              --title "LipatoS — Перемещение и стопки предметов v34.2.14" \
+              --notes "Шкала веса перемещена под поиск и сокращена до гири и значения текущий / максимальный."
+          fi
