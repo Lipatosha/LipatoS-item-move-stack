@@ -416,35 +416,38 @@ function imsResolveContextItem(row) {
   return null;
 }
 
+function imsGroupHasMember(group, actor) {
+  if (group?.type !== "group" || !actor) return false;
+  const members = group.system?.members;
+  if (members?.ids?.has?.(actor.id)) return true;
+  return Array.from(members ?? []).some(member => {
+    const value = member?.actor ?? member;
+    return value === actor.id || value === actor.uuid
+      || value?.id === actor.id || value?.uuid === actor.uuid;
+  });
+}
+
 function imsTransferRecipients(sourceActor) {
-  const result = [{id: "__GM__", name: "ГМ", type: "gm"}];
+  const result = [];
+  if (imsPrimaryActiveGM()) result.push({id: "__GM__", name: "ГМ", type: "gm"});
 
-  // If we are transferring FROM Group, show GM first and then players.
-  if (sourceActor?.type === "group") {
-    for (const actor of game.actors) {
-      if (actor.id === sourceActor.id) continue;
-      if (actor.type !== "character") continue;
-
-      result.push({
-        id: actor.id,
-        name: actor.name,
-        type: "character"
-      });
+  if (sourceActor?.type === "character") {
+    for (const group of game.actors.filter(actor => actor.type === "group")) {
+      if (imsGroupHasMember(group, sourceActor)) {
+        result.push({id: group.id, name: group.name, type: "group"});
+      }
     }
-
-    return result;
   }
 
-  // From a normal character: GM, Group(s), then other players.
-  for (const actor of game.actors) {
-    if (actor.id === sourceActor.id) continue;
-    if (!["group", "character"].includes(actor.type)) continue;
-
-    result.push({
-      id: actor.id,
-      name: actor.name,
-      type: actor.type
-    });
+  // The user must be online and have this character assigned.
+  const seen = new Set([sourceActor?.id]);
+  for (const user of game.users) {
+    if (!user.active || user.isGM) continue;
+    const character = user.character;
+    if (character?.type !== "character" || seen.has(character.id)) continue;
+    if (!game.actors.get(character.id)) continue;
+    seen.add(character.id);
+    result.push({id: character.id, name: character.name, type: "character"});
   }
 
   return result.sort((a, b) => {
@@ -462,130 +465,136 @@ function imsPrimaryActiveGM() {
     .sort((a, b) => a.id.localeCompare(b.id))[0] ?? null;
 }
 
+function imsCoinCode(item) {
+  const code = item?.getFlag?.("lipatos-three-currencies-global", "coin")
+    ?? foundry.utils.getProperty(item, "flags.lipatos-three-currencies-global.coin");
+  return ["cp", "sp", "gp"].includes(code) ? code : null;
+}
+
 async function imsGMHandleTransfer(payload) {
   if (!game.user.isGM) return;
   const primary = imsPrimaryActiveGM();
-  if (primary && primary.id !== game.user.id) return;
+  if (!primary || primary.id !== game.user.id) return;
 
-  const sourceActor = await fromUuid(payload?.sourceActorUuid).catch(() => null);
-  if (!sourceActor?.items) return;
+  const reply = (ok, extra = {}) => game.socket.emit(`module.${MODULE_ID}`, {
+    type: "ims-transfer-result", requestId: payload?.requestId, requesterId: payload?.requesterId, ok, ...extra
+  });
+
+  const requester = game.users.get(payload?.requesterId);
+  const sourceActor = payload?.sourceActorUuid
+    ? await fromUuid(payload.sourceActorUuid).catch(() => null) : null;
+  if (!requester?.active || !sourceActor?.items ||
+      !sourceActor.testUserPermission?.(requester, "OWNER")) {
+    reply(false, {error: "Отправитель недоступен или нет прав на передачу."});
+    return;
+  }
 
   const sourceItem = sourceActor.items.get(payload?.sourceItemId);
-  if (!sourceItem) return;
-
-  if (payload?.target === "__GM__") {
-    // "Передать ГМу" = remove the item/quantity from the sender.
-    const sourceQty = Math.max(1, Math.floor(getQuantity(sourceItem)));
-    const qty = Math.max(1, Math.min(sourceQty, Math.floor(Number(payload.qty) || 1)));
-
-    if (qty >= sourceQty) await sourceItem.delete();
-    else await sourceItem.update({"system.quantity": sourceQty - qty});
-
-    game.socket.emit(`module.${MODULE_ID}`, {
-      type: "ims-transfer-result",
-      requestId: payload.requestId,
-      ok: true,
-      targetName: "ГМ",
-      targetType: "gm",
-      sourceActorName: sourceActor.name,
-      sourceActorType: sourceActor.type,
-      itemName: sourceItem.name,
-      itemImg: sourceItem.img,
-      qty
-    });
+  if (!sourceItem) {
+    reply(false, {error: "Предмет больше недоступен."});
     return;
   }
 
-  const targetActor = game.actors.get(payload?.targetActorId);
-  if (!targetActor) {
-    game.socket.emit(`module.${MODULE_ID}`, {
-      type: "ims-transfer-result",
-      requestId: payload.requestId,
-      ok: false,
-      error: "Получатель больше недоступен."
-    });
+  const allowed = imsTransferRecipients(sourceActor);
+  const recipientId = payload?.target === "__GM__" ? "__GM__" : payload?.targetActorId;
+  if (!allowed.some(r => r.id === recipientId)) {
+    reply(false, {error: "Получатель не в сети или не состоит в вашей группе."});
     return;
   }
 
-  const sourceQty = Math.max(1, Math.floor(getQuantity(sourceItem)));
-  const qty = Math.max(1, Math.min(sourceQty, Math.floor(Number(payload.qty) || 1)));
-
-  const targetItem = isStackable(sourceItem)
-    ? targetActor.items.find(i => isStackable(i) && sameItem(i, sourceItem))
-    : null;
-
-  if (targetItem) {
-    await targetItem.update({"system.quantity": getQuantity(targetItem) + qty});
-  } else {
-    const itemData = sourceItem.toObject();
-    delete itemData._id;
-    if (foundry.utils.hasProperty(itemData, "system.quantity")) {
-      foundry.utils.setProperty(itemData, "system.quantity", qty);
-    }
-    if (foundry.utils.hasProperty(itemData, "system.container")) {
-      foundry.utils.setProperty(itemData, "system.container", null);
-    }
-    await targetActor.createEmbeddedDocuments("Item", [itemData], {keepId: false});
+  const sourceQty = Math.floor(getQuantity(sourceItem));
+  const qty = Number(payload?.qty);
+  if (!Number.isSafeInteger(qty) || qty < 1 || qty > sourceQty) {
+    reply(false, {error: "Количество предметов изменилось. Откройте передачу заново."});
+    return;
   }
 
-  if (qty >= sourceQty) await sourceItem.delete();
-  else await sourceItem.update({"system.quantity": sourceQty - qty});
-
-  game.socket.emit(`module.${MODULE_ID}`, {
-    type: "ims-transfer-result",
-    requestId: payload.requestId,
-    ok: true,
-    targetName: targetActor.name,
-    targetType: targetActor.type,
+  const coinCode = imsCoinCode(sourceItem);
+  const common = {
+    sourceActorUuid: sourceActor.uuid,
     sourceActorName: sourceActor.name,
     sourceActorType: sourceActor.type,
     itemName: sourceItem.name,
     itemImg: sourceItem.img,
-    qty
-  });
+    coinCode, qty
+  };
+
+  if (recipientId === "__GM__") {
+    try {
+      if (qty === sourceQty) await sourceItem.delete();
+      else await sourceItem.update({"system.quantity": sourceQty - qty});
+      reply(true, {...common, targetName: "ГМ", targetType: "gm"});
+    } catch (err) {
+      console.error(`${MODULE_ID} | Transfer to GM failed`, err);
+      reply(false, {error: "Не удалось передать предмет ГМу."});
+    }
+    return;
+  }
+
+  const targetActor = game.actors.get(recipientId);
+  if (!targetActor) {
+    reply(false, {error: "Получатель больше недоступен."});
+    return;
+  }
+
+  const targetItem = !coinCode && isStackable(sourceItem)
+    ? targetActor.items.find(item => isStackable(item) && sameItem(item, sourceItem))
+    : null;
+  const oldTargetQty = targetItem ? getQuantity(targetItem) : null;
+  const oldCurrency = coinCode ? Number(targetActor.system?.currency?.[coinCode] ?? NaN) : null;
+  let created = [];
+  let credited = false;
+
+  try {
+    if (coinCode) {
+      // Physical coins go directly to the wallet, not into inventory.
+      if (!Number.isFinite(oldCurrency)) throw new Error("Recipient has no wallet");
+      await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency + qty});
+      credited = true;
+    } else if (targetItem) {
+      await targetItem.update({"system.quantity": oldTargetQty + qty});
+      credited = true;
+    } else {
+      const itemData = sourceItem.toObject();
+      delete itemData._id;
+      if (foundry.utils.hasProperty(itemData, "system.quantity")) {
+        foundry.utils.setProperty(itemData, "system.quantity", qty);
+      }
+      if (foundry.utils.hasProperty(itemData, "system.container")) {
+        foundry.utils.setProperty(itemData, "system.container", null);
+      }
+      created = await targetActor.createEmbeddedDocuments("Item", [itemData], {keepId: false});
+      if (!Array.isArray(created) || !created.length) throw new Error("Item creation was blocked");
+      credited = true;
+    }
+
+    if (qty === sourceQty) await sourceItem.delete();
+    else await sourceItem.update({"system.quantity": sourceQty - qty});
+
+    reply(true, {...common, targetName: targetActor.name, targetType: targetActor.type});
+  } catch (err) {
+    console.error(`${MODULE_ID} | Context transfer failed`, err);
+    try {
+      if (credited) {
+        if (coinCode) {
+          await targetActor.update({[`system.currency.${coinCode}`]: oldCurrency});
+        } else if (targetItem) {
+          await targetItem.update({"system.quantity": oldTargetQty});
+        } else if (created.length) {
+          await targetActor.deleteEmbeddedDocuments("Item", created.map(item => item.id));
+        }
+      }
+    } catch (rollbackError) {
+      console.error(`${MODULE_ID} | Transfer rollback failed`, rollbackError);
+    }
+    reply(false, {error: "Передача не выполнена. Проверьте журнал ГМа."});
+  }
 }
 
-
-async function imsPlayerTransferChat(result) {
-  if (game.user.isGM || !result?.ok) return;
-
-  const target = foundry.utils.escapeHTML(result.targetName ?? "Получатель");
-  const itemName = foundry.utils.escapeHTML(result.itemName ?? "Предмет");
-  const img = foundry.utils.escapeHTML(result.itemImg ?? "icons/svg/item-bag.svg");
-  const qty = Math.max(1, Number(result.qty ?? 1) || 1);
-
-  const content = `
-    <div class="pcga-item-audit">
-      📦 <strong>Передача предмета</strong><br>
-      Вы передали → [ <strong>${target}</strong> ]<br>
-      <div class="pcga-item-line">
-        <img src="${img}" alt="${itemName}">
-        <span>${itemName}${qty > 1 ? ` × <strong>${qty}</strong>` : ""}</span>
-      </div>
-      <strong>Успешно передано ✓</strong>
-    </div>`;
-
-  await ChatMessage.create({
-    content,
-    whisper: [game.user.id],
-    speaker: ChatMessage.getSpeaker()
-  });
-}
-
-function imsSendAuditToCurrencyModule(result) {
-  if (game.user.isGM || !result?.ok) return;
-
-  game.socket.emit("module.player-currency-gm-audit", {
-    type: "item-audit",
-    action: "transfer",
-    sourceActorName: result.sourceActorName,
-    sourceActorType: result.sourceActorType,
-    targetActorName: result.targetName,
-    targetActorType: result.targetType,
-    itemName: result.itemName,
-    itemImg: result.itemImg,
-    quantity: result.qty
-  });
+function imsNotifyAuditModule(result) {
+  if (!result?.ok) return;
+  if (!game.modules.get("lipatos-player-currency-gm-audit")?.active) return;
+  Hooks.callAll("lipatosItemTransferCompleted", result);
 }
 
 function imsRequestGMTransfer(sourceItem, recipient, qty) {
@@ -594,7 +603,7 @@ function imsRequestGMTransfer(sourceItem, recipient, qty) {
     const socket = `module.${MODULE_ID}`;
 
     const handler = payload => {
-      if (payload?.type !== "ims-transfer-result" || payload?.requestId !== requestId) return;
+      if (payload?.type !== "ims-transfer-result" || payload?.requestId !== requestId || payload?.requesterId !== game.user.id) return;
       game.socket.off(socket, handler);
       resolve(payload);
     };
@@ -604,6 +613,7 @@ function imsRequestGMTransfer(sourceItem, recipient, qty) {
     game.socket.emit(socket, {
       type: "ims-transfer-request",
       requestId,
+      requesterId: game.user.id,
       sourceActorUuid: sourceItem.parent.uuid,
       sourceItemId: sourceItem.id,
       target: recipient.id === "__GM__" ? "__GM__" : "actor",
@@ -853,14 +863,18 @@ async function imsOpenTransferMenuDialog(item) {
       return;
     }
 
+    if (!imsTransferRecipients(sourceActor).some(recipient => recipient.id === selected.id)) {
+      ui.notifications.warn("Получатель больше не в сети или группа недоступна.");
+      return;
+    }
+
     const result2 = await imsRequestGMTransfer(item, selected, result.qty);
     if (!result2?.ok) {
       ui.notifications.warn(result2?.error ?? "Не удалось передать предмет.");
       return;
     }
 
-    await imsPlayerTransferChat(result2);
-    imsSendAuditToCurrencyModule(result2);
+    imsNotifyAuditModule(result2);
     ui.notifications.info(`${item.name}: передано ×${result2.qty}`);
     return;
   } finally {
