@@ -1,0 +1,42 @@
+name: Release LipatoS Item Move Stack v34.2.5
+
+on:
+  push:
+    paths:
+      - ".github/workflows/release-v34.2.5.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+      - name: Verify JavaScript and regression tests
+        run: |
+          node --check main.js
+          node --check dynamic-weight.js
+          node tests/smoke.cjs
+          node tests/dynamic-weight.cjs
+          node tests/coin-drag.cjs
+          node -e 'const m=require("./module.json");if(m.version!=="34.2.5")process.exit(1);'
+      - name: Package installable module
+        run: |
+          zip -q lipatos-item-move-stack.zip module.json main.js dynamic-weight.js style.css README.md CHANGELOG.md
+          unzip -t lipatos-item-move-stack.zip
+      - name: Publish v34.2.5 GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v34.2.5 >/dev/null 2>&1; then
+            gh release upload v34.2.5 lipatos-item-move-stack.zip module.json --clobber
+          else
+            gh release create v34.2.5 lipatos-item-move-stack.zip module.json \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "LipatoS — Перемещение и стопки предметов v34.2.5" \
+              --notes "Запрет попадания физических монет в корень инвентаря; защита исходных стопок от удаления, если создание отменено."
+          fi
