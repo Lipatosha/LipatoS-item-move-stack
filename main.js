@@ -235,6 +235,16 @@ async function transferItem(sheet, event, data) {
   const targetActor = getActor(sheet);
   const sourceActor = sourceItem?.parent;
 
+  // Physical LipatoS coins must never be transferred as ordinary inventory
+  // Items. Only a real container row is a valid physical-coin destination;
+  // dropping onto the GP/SP/CP panel is handled by the currency module.
+  const coinCode = sourceItem?.getFlag?.("lipatos-three-currencies-global", "coin")
+    ?? foundry.utils.getProperty(sourceItem, "flags.lipatos-three-currencies-global.coin");
+  if (["cp", "sp", "gp"].includes(coinCode) && targetActor?.type === "character") {
+    const destinationItem = getDropTargetItem(targetActor, event);
+    return destinationItem?.type === "container" ? null : false;
+  }
+
   // Only intercept owned embedded Items being moved Actor -> different Actor.
   if (!sourceItem || !targetActor || sourceActor?.documentName !== "Actor") return null;
   if (targetActor.documentName !== "Actor") return null;
@@ -294,6 +304,9 @@ async function transferItem(sheet, event, data) {
       }
 
       created = await targetActor.createEmbeddedDocuments("Item", [itemData], {keepId: false});
+      // A preCreateItem hook can reject an invalid drop (e.g. physical coins
+      // into the inventory root). Never remove the source when that happens.
+      if (!Array.isArray(created) || created.length === 0) return false;
     }
 
     // 2. Remove only the selected quantity from the source.
