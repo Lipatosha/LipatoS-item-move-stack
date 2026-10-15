@@ -13,6 +13,7 @@ function testGroupVisibility(isGM) {
     apps: {}, items: [{system:{quantity:2,weight:4}}, {system:{quantity:1,weight:{value:2}}}],
     saved: 300, getFlag(namespace, key) {
       if(namespace==="lipatos-item-move-stack" && key==="groupCapacity") return this.saved;
+      if(namespace==="item-move-stack") throw Error('Flag scope "item-move-stack" is not valid or not currently active');
       return undefined;
     },
     async setFlag(namespace,key,value){this.saved=value;},

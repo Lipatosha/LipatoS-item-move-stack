@@ -1714,15 +1714,17 @@ async function imsMigrateLegacyGroupCapacity() {
     if (actor.type !== "group") continue;
 
     const current = actor.getFlag?.(MODULE_ID, "groupCapacity");
-    const legacy = actor.getFlag?.(LEGACY_MODULE_ID, "groupCapacity");
+    // Inactive legacy modules do not have a valid getFlag scope in v14.
+    const legacy = actor.flags?.[LEGACY_MODULE_ID]?.groupCapacity;
 
     if (current === undefined && legacy !== undefined) {
-      await actor.setFlag(MODULE_ID, "groupCapacity", legacy);
+      try {
+        await actor.setFlag(MODULE_ID, "groupCapacity", legacy);
+      } catch (error) {
+        console.warn(MODULE_ID + " | Could not migrate group weight", actor.name, error);
+      }
     }
-
-    if (legacy !== undefined) {
-      await actor.unsetFlag(LEGACY_MODULE_ID, "groupCapacity");
-    }
+    // Keep the orphaned flag rather than calling unsetFlag on an invalid scope.
   }
 }
 

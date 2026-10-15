@@ -1,0 +1,46 @@
+name: Release LipatoS Item Move Stack v34.2.13
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-v34.2.13.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify module and legacy flag regression
+        run: |
+          node --check main.js
+          node --check group-capacity.js
+          node --check dynamic-weight.js
+          node -e 'const m=require("./module.json");if(m.version!=="34.2.13" || !m.esmodules.includes("group-capacity.js"))process.exit(1)'
+          node tests/smoke.cjs
+          node tests/dynamic-weight.cjs
+          node tests/coin-drag.cjs
+          node tests/online-transfer.cjs
+          node tests/direct-transfer.cjs
+          node tests/group-capacity.cjs
+          node tests/legacy-group-capacity.cjs
+      - name: Package module
+        run: |
+          zip -q lipatos-item-move-stack.zip module.json main.js group-capacity.js dynamic-weight.js style.css README.md CHANGELOG.md
+          unzip -t lipatos-item-move-stack.zip
+          unzip -l lipatos-item-move-stack.zip | grep -F group-capacity.js
+      - name: Publish v34.2.13 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v34.2.13 >/dev/null 2>&1; then
+            gh release upload v34.2.13 lipatos-item-move-stack.zip module.json --clobber
+          else
+            gh release create v34.2.13 lipatos-item-move-stack.zip module.json \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --latest \
+              --title "LipatoS — Перемещение и стопки предметов v34.2.13" \
+              --notes "Исправлено падение настройки веса группы от неактивного legacy flag scope item-move-stack."
+          fi

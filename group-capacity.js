@@ -17,8 +17,10 @@
   }
 
   function limitOf(actor) {
+    // An uninstalled module cannot be passed to getFlag() in Foundry v14.
+    // Its persisted flags remain available on actor.flags.
     const n = Number(actor.getFlag?.(MODULE, "groupCapacity") ??
-      actor.getFlag?.(LEGACY, "groupCapacity"));
+      actor.flags?.[LEGACY]?.groupCapacity);
     return Number.isFinite(n) && n > 0 ? n : 150;
   }
 
@@ -86,8 +88,8 @@
       }
       try {
         await actor.setFlag(MODULE, "groupCapacity", Math.max(1, Math.floor(parsed)));
-        if (actor.getFlag?.(LEGACY, "groupCapacity") !== undefined)
-          await actor.unsetFlag(LEGACY, "groupCapacity");
+        // Retain orphaned legacy flags; unsetFlag() on an inactive
+        // scope would throw and report a false save failure.
         bar.dataset.capacitySignature = "";
         scheduleScan();
       } catch (error) {
@@ -165,7 +167,7 @@
     if (game.system?.id !== "dnd5e") return;
     new MutationObserver(scheduleScan).observe(document.body, {childList: true, subtree: true});
     scheduleScan();
-    console.info(MODULE, "Настройка веса группы включена (v34.2.12)");
+    console.info(MODULE, "Настройка веса группы включена (v34.2.13)");
   });
 
   globalThis.LipatoSGroupCapacity = {
