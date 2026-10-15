@@ -648,6 +648,7 @@ async function imsRequestGMTransfer(sourceItem, recipient, qty) {
   const socket = `module.${MODULE_ID}`;
   return new Promise(resolve => {
     let completed = false;
+    let timeout;
     const settle = result => {
       if (completed) return;
       completed = true;
@@ -661,10 +662,15 @@ async function imsRequestGMTransfer(sourceItem, recipient, qty) {
       settle(result);
     };
     game.socket.on(socket, onResponse);
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       settle({ok: false, error: "Не удалось выполнить передачу. Проверьте подключение игроков и повторите попытку."});
     }, 15000);
-    game.socket.emit(socket, payload);
+    try {
+      game.socket.emit(socket, payload);
+    } catch (error) {
+      console.error(`${MODULE_ID} | Transfer socket error`, error);
+      settle({ok: false, error: "Передача не выполнена из-за ошибки соединения."});
+    }
   });
 }
 
