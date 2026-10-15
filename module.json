@@ -2,7 +2,7 @@
   "id": "lipatos-item-move-stack",
   "title": "LipatoS - Перемещение и стопки предметов",
   "description": "Передача предметов без подтверждения ГМа; прямые операции у мастера, автоматическая передача игрокам и защита монет от попадания в инвентарь.",
-  "version": "34.2.7",
+  "version": "34.2.8",
   "compatibility": {
     "minimum": "14",
     "verified": "14"
@@ -33,5 +33,5 @@
   ],
   "socket": true,
   "manifest": "https://raw.githubusercontent.com/Lipatosha/LipatoS-item-move-stack/main/module.json",
-  "download": "https://github.com/Lipatosha/LipatoS-item-move-stack/releases/latest/download/lipatos-item-move-stack.zip"
+  "download": "https://raw.githubusercontent.com/Lipatosha/LipatoS-item-move-stack/main/dist/lipatos-item-move-stack.zip"
 }

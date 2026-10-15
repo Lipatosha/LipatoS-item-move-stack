@@ -1186,23 +1186,38 @@ function groupWeight(actor) {
   return Math.round(total * 100) / 100;
 }
 
+// Rebuild group capacity after the current inventory DOM is rendered.
+// D&D5e v6 and some sheet modules replace inventory parts independently.
 function renderGroupCapacity(sheet) {
-  if (sheet.actor?.type !== "group") return;
-  if ((sheet.inventorySource ?? sheet.actor) !== sheet.actor) return;
+  const actor = sheet?.actor ?? sheet?.document;
+  if (actor?.type !== "group") return;
 
-  const inventory = sheet.element?.querySelector?.(".inventory-element");
+  const root = sheet.element?.[0] ?? sheet.element;
+  if (!root?.querySelector) return;
+
+  const inventory = root.querySelector(".inventory-element")
+    ?? root.querySelector('[data-tab="inventory"] .body');
   if (!inventory) return;
 
-  inventory.querySelector(".ims-group-capacity")?.remove();
+  // A group may show its vehicle's inventory instead of its own.
+  if ((sheet.inventorySource ?? actor) !== actor) {
+    inventory.querySelector(".ims-group-capacity")?.remove();
+    return;
+  }
 
-  const current = groupWeight(sheet.actor);
-  let max = Number(sheet.actor.getFlag(MODULE_ID, "groupCapacity") ?? sheet.actor.getFlag(LEGACY_MODULE_ID, "groupCapacity"));
+  const current = groupWeight(actor);
+  let max = Number(actor.getFlag(MODULE_ID, "groupCapacity") ?? actor.getFlag(LEGACY_MODULE_ID, "groupCapacity"));
   if (!Number.isFinite(max) || max <= 0) max = 150;
 
-  const pct = Math.max(0, Math.min(100, (current / max) * 100));
+  const pct = Math.max(0, Math.min(100, current / max * 100));
   const over = current > max;
 
-  const bar = document.createElement("div");
+  // Preserve an existing input while the GM is editing its value.
+  let bar = inventory.querySelector(".ims-group-capacity");
+  if (bar && bar.contains(document.activeElement)) return;
+  bar?.remove();
+
+  bar = document.createElement("div");
   bar.className = `ims-group-capacity${over ? " over" : ""}`;
   bar.innerHTML = `
     <div class="ims-capacity-track" title="Вес инвентаря группы">
@@ -1219,22 +1234,47 @@ function renderGroupCapacity(sheet) {
       </div>
     </div>`;
 
-  const currency = inventory.querySelector(".currency");
-  const search = inventory.querySelector(".filter-list, .inventory-header, search");
-  if (currency?.parentElement) currency.insertAdjacentElement("afterend", bar);
-  else if (search?.parentElement) search.insertAdjacentElement("afterend", bar);
+  // The D&D5e 6.0.6 inventory template uses .currency followed by .middle,
+  // not the older .filter-list or .inventory-header nodes.
+  const currency = inventory.querySelector(":scope > .currency");
+  const controls = inventory.querySelector(":scope > .middle, :scope > item-list-controls, :scope > .items-list");
+  if (currency) currency.insertAdjacentElement("afterend", bar);
+  else if (controls) controls.insertAdjacentElement("beforebegin", bar);
   else inventory.prepend(bar);
 
   const input = bar.querySelector(".ims-capacity-max");
   input?.addEventListener("change", async event => {
     if (!game.user.isGM) return;
     const value = Math.max(1, Math.floor(Number(event.currentTarget.value) || 1));
-    await sheet.actor.setFlag(MODULE_ID, "groupCapacity", value);
-    if (sheet.actor.getFlag?.(LEGACY_MODULE_ID, "groupCapacity") !== undefined) {
-      await sheet.actor.unsetFlag(LEGACY_MODULE_ID, "groupCapacity");
+    try {
+      await actor.setFlag(MODULE_ID, "groupCapacity", value);
+      if (actor.getFlag(LEGACY_MODULE_ID, "groupCapacity") !== undefined) {
+        await actor.unsetFlag(LEGACY_MODULE_ID, "groupCapacity");
+      }
+      sheet.render({force: true});
+    } catch (error) {
+      console.error(`${MODULE_ID} | Cannot save group capacity`, error);
+      ui.notifications.error("Не удалось сохранить максимальный вес группы.");
+      event.currentTarget.value = String(max);
     }
-    sheet.render({force: true});
   });
+}
+
+function imsWatchGroupCapacity(sheet) {
+  const actor = sheet?.actor ?? sheet?.document;
+  const root = sheet?.element?.[0] ?? sheet?.element;
+  if (actor?.type !== "group" || !root?.querySelector || typeof MutationObserver === "undefined") return;
+  if (sheet.__imsCapacityRoot === root) return;
+
+  sheet.__imsCapacityObserver?.disconnect();
+  sheet.__imsCapacityRoot = root;
+  const observer = new MutationObserver(() => {
+    if (!root.isConnected) return;
+    const inventory = root.querySelector(".inventory-element");
+    if (inventory && !inventory.querySelector(".ims-group-capacity")) renderGroupCapacity(sheet);
+  });
+  observer.observe(root, {childList: true, subtree: true});
+  sheet.__imsCapacityObserver = observer;
 }
 
 function patchGroupFeatures(GroupSheet) {
@@ -1266,6 +1306,7 @@ function patchGroupFeatures(GroupSheet) {
     GroupSheet.prototype._onRender = async function(context, options) {
       await originalRender.call(this, context, options);
       renderGroupCapacity(this);
+      imsWatchGroupCapacity(this);
     };
   }
 
@@ -1807,6 +1848,12 @@ Hooks.once("ready", async () => {
 
   const actorApps = game.dnd5e?.applications?.actor ?? globalThis.dnd5e?.applications?.actor ?? {};
   patchGroupFeatures(actorApps.GroupActorSheet);
+  // Fallback for alternate sheet registrations and modules that replace _onRender.
+  Hooks.on("renderApplicationV2", app => {
+    if ((app?.actor ?? app?.document)?.type !== "group") return;
+    renderGroupCapacity(app);
+    imsWatchGroupCapacity(app);
+  });
   const names = [
     "CharacterActorSheet",
     "GroupActorSheet",
