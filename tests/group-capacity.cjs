@@ -1,91 +1,96 @@
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const fs = require("node:fs");
-const src = fs.readFileSync("group-capacity.js", "utf8");
+const source = fs.readFileSync("group-capacity.js", "utf8");
 
-function verify(isGM) {
-  const callbacks = new Map();
-  const actor = {id: "g2", type: "group", name: "Группа 2", apps: {}, sheet: null,
-    items: [{system: {quantity: 2, weight: 3}}, {system: {quantity: 1, weight: {value: 4}}}],
-    getFlag(namespace, name) {return namespace === "lipatos-item-move-stack" && name === "groupCapacity" ? 280 : undefined;}
-  };
+function testGroupVisibility(isGM) {
+  const handlers = new Map();
   let ready;
   let observer;
-  const inventory = {
-    bar: null,
-    querySelector(q) {
-      if (q === ".ims-group-capacity") return this.bar;
-      if (q === ":scope > .currency") return currency;
-      return null;
+  let bar = null;
+  const actor = {
+    id: "group-a", uuid: "Actor.group-a", type: "group", name: "Группа",
+    apps: {}, items: [{system:{quantity:2,weight:4}}, {system:{quantity:1,weight:{value:2}}}],
+    saved: 300, getFlag(namespace, key) {
+      if(namespace==="lipatos-item-move-stack" && key==="groupCapacity") return this.saved;
+      return undefined;
     },
-    prepend(el) {this.bar = el;}
+    async setFlag(namespace,key,value){this.saved=value;},
+    async unsetFlag(){}
   };
-  const currency = {insertAdjacentElement(where, el) {
-    assert.equal(where, "afterend");
-    inventory.bar = el;
-  }};
-  const root = {
-    isConnected: true, dataset: {},
-    querySelector(q) {
-      if (q.includes("inventory-element")) return inventory;
-      if (q === ".window-title") return null;
-      if (q === ".sheet-header .document-name") return {textContent: "Группа 2"};
+  const host = {
+    isConnected:true,
+    prepend(element){bar=element;},
+    querySelector(sel) {
+      if (sel === ":scope > .ims-group-capacity") return bar;
+      if (sel === "dnd5e-inventory, .inventory-element") return inventory;
       return null;
     }
   };
+  const inventory = {parentElement:host};
+  const title = {textContent:"Группа"};
+  const root = {
+    dataset:{}, parentElement:null,
+    querySelector(selector) {
+      if (selector === ".sheet-header .document-name") return title;
+      if (selector === "dnd5e-inventory, .inventory-element") return inventory;
+      return null;
+    },
+    querySelectorAll(){return []}
+  };
+  const button = {parentElement:root};
   const document = {
-    activeElement: null, body: {},
-    querySelectorAll() {return [root]},
+    body:{},activeElement:null,
+    querySelectorAll(selector) {
+      if (selector.includes("placeMembers")) return [button];
+      if (selector === ".ims-group-capacity") return bar ? [bar] : [];
+      return [];
+    },
     createElement() {
-      const b = {
-        dataset: {}, innerHTML: "", className: "",
-        remove() {if (inventory.bar === b) inventory.bar = null;},
-        contains() {return false;},
-        querySelector(q) {
-          if (q !== ".ims-capacity-max" || !this.innerHTML.includes("ims-capacity-max")) return null;
-          return {addEventListener() {}};
+      const element = {
+        dataset:{},innerHTML:"",className:"",
+        style:{setProperty(){}},
+        remove(){if(bar===element)bar=null;},
+        contains(){return false;},
+        querySelector(sel) {
+          if(sel !== ".ims-capacity-max") return null;
+          return {addEventListener(){}};
         }
       };
-      return b;
+      return element;
     }
   };
-  const sandbox = {
+  const globals = {
+    Hooks:{
+      on(name,fn){handlers.set(name,fn);},
+      once(name,fn){if(name==="ready")ready=fn;}
+    },
+    game:{system:{id:"dnd5e"},user:{isGM},actors:[actor],modules:{get(){return {active:true,version:"34.2.12"};}}},
+    ui:{windows:{},notifications:{error(){throw Error("Failed to save")}}},
     document,
-    game: {user: {isGM}, system: {id:"dnd5e"}, actors: [actor]},
-    ui: {windows: {}, notifications: {error() {throw Error("unexpected error")}}},
-    foundry: {applications: {}},
-    Hooks: {
-      on(name,fn) {callbacks.set(name,fn);},
-      once(name,fn) {if(name === "ready") ready = fn;}
-    },
-    MutationObserver: class {
-      constructor(fn) {this.notify = fn; observer = this;}
-      observe() {}
-    },
-    requestAnimationFrame(fn) {fn()},
+    MutationObserver:class {constructor(fn){observer=fn;}observe(){}},
+    requestAnimationFrame:fn=>fn(),
     console
   };
-  vm.runInNewContext(src, sandbox, {filename:"group-capacity.js"});
-  assert.equal(typeof ready, "function");
-  assert.ok(callbacks.has("renderApplicationV2"));
-
-  // The actor sheet is NOT present in ui.windows or actor.apps.
-  // Its .window-title is blank, as with D&D5e 6.0.6.
+  vm.runInNewContext(source,globals,{filename:"group-capacity.js"});
+  assert.equal(typeof ready,"function");
   ready();
-  assert.ok(inventory.bar, "hidden-title group window must get a weight bar");
-  assert.ok(inventory.bar.innerHTML.includes("<span>10</span>"), "weight must equal 10");
-  assert.equal(inventory.bar.innerHTML.includes("ims-capacity-max"), isGM, "only GM can edit maximum");
-  assert.ok(inventory.bar.innerHTML.includes(isGM ? 'value="280"' : '>280</span>'));
 
-  inventory.bar = null;
-  observer.notify([{addedNodes: []}]);
-  assert.ok(inventory.bar, "bar must recover after another module replaces inventory DOM");
+  // The Group sheet is unregistered in ui.windows/actor.apps,
+  // and its standard Foundry window title is hidden.
+  assert.ok(bar,"Group must be discovered via its placeMembers button");
+  assert.ok(bar.innerHTML.includes("Вес группы:"),"Visible Russian weight label");
+  assert.ok(bar.innerHTML.includes("<span>10</span>"),"Weight is 2*4+2");
+  assert.equal(bar.innerHTML.includes('class="ims-capacity-max"'),isGM,
+    "Only GM sees editable maximum");
+  assert.ok(bar.innerHTML.includes(isGM ? 'value="300"' : '<span>300</span>'));
 
-  // Native render hook should work independently of fallback discovery.
-  inventory.bar = null;
-  callbacks.get("renderApplicationV2")({actor, element: root});
-  assert.ok(inventory.bar);
+  // Other module partially rerenders the inventory subtree.
+  bar=null;
+  observer([]);
+  assert.ok(bar,"Capacity survives a re-render");
+  assert.equal(globals.LipatoSGroupCapacity.diagnostics().bars,1);
 }
-verify(true);
-verify(false);
-console.log("Group capacity: hidden window title, GM-only edit, restoration passed");
+testGroupVisibility(true);
+testGroupVisibility(false);
+console.log("Group capacity: independent placement, hidden window, rerender and GM-only input passed.");
